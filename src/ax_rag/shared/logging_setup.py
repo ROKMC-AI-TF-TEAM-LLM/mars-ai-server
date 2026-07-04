@@ -14,7 +14,8 @@ import logging
 
 from ax_rag.shared.config import get_config
 
-LOG_FORMAT = "[%(asctime)s] %(levelname)s %(name)s: %(message)s"
+# 밀리초 포함: 스트리밍 조각 간격(수십 ms)이 로그에서 구분돼야 한다
+LOG_FORMAT = "[%(asctime)s.%(msecs)03d] %(levelname)s %(name)s: %(message)s"
 DATE_FORMAT = "%H:%M:%S"
 
 
