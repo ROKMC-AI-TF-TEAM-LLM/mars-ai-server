@@ -73,7 +73,11 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def _rebuild_bm25() -> None:
-    """전체 자식 청크로 BM25 인덱스를 재빌드한다 (부분 갱신 불가)."""
+    """전체 자식 청크로 BM25 인덱스를 재빌드한다 (부분 갱신 불가).
+
+    방금 insert된 청크가 조회에 보장되도록 먼저 flush한다.
+    """
+    vectorstore.flush()
     rows = vectorstore.fetch_all_children(output_fields=["text", *_BM25_META_FIELDS])
     texts = [row["text"] for row in rows]
     metadatas = [{field: row[field] for field in _BM25_META_FIELDS} for row in rows]

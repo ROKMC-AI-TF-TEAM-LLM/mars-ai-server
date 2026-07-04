@@ -38,7 +38,10 @@ def get_parent_collection(drop_existing: bool = False) -> str:
     index_params = client.prepare_index_params()
     # 컬렉션 로드에 벡터 인덱스가 필요해 최소 비용의 FLAT을 사용한다
     index_params.add_index(field_name="dummy_vector", index_type="FLAT", metric_type="L2")
-    client.create_collection(PARENT_COLLECTION, schema=schema, index_params=index_params)
+    # Strong 정합성: 적재 직후의 부모 치환 조회가 방금 insert를 봐야 한다
+    client.create_collection(
+        PARENT_COLLECTION, schema=schema, index_params=index_params, consistency_level="Strong"
+    )
     return PARENT_COLLECTION
 
 

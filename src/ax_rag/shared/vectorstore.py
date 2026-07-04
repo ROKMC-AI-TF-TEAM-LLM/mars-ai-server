@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pymilvus import DataType, MilvusClient
 
@@ -26,10 +27,21 @@ _QUERY_LIMIT = 16384
 
 @lru_cache(maxsize=1)
 def get_client() -> MilvusClient:
-    """Milvus Lite 임베디드 클라이언트 싱글턴."""
+    """Milvus 클라이언트 싱글턴.
+
+    운영(L40)은 Milvus Lite 로컬 파일 경로를 쓴다. 개발 노트북(Windows)은
+    Milvus Lite 미지원이라 localhost의 Milvus standalone URI
+    (http://localhost:19530)도 허용한다. 에어갭 규칙상 URI는 localhost만 가능.
+    """
     config = get_config()
-    Path(config.MILVUS_LITE_PATH).parent.mkdir(parents=True, exist_ok=True)
-    return MilvusClient(config.MILVUS_LITE_PATH)
+    uri = config.MILVUS_LITE_PATH
+    if uri.startswith("http"):
+        host = urlparse(uri).hostname
+        if host not in ("localhost", "127.0.0.1"):
+            raise ValueError(f"Milvus URI에 localhost가 아닌 호스트는 허용되지 않는다: {uri}")
+    else:
+        Path(uri).parent.mkdir(parents=True, exist_ok=True)
+    return MilvusClient(uri)
 
 
 def create_collection(drop_existing: bool = False) -> str:
@@ -64,7 +76,10 @@ def create_collection(drop_existing: bool = False) -> str:
         metric_type="COSINE",
         params={"M": 16, "efConstruction": 200},
     )
-    client.create_collection(name, schema=schema, index_params=index_params)
+    # Strong 정합성: 적재 직후 BM25 재빌드용 전체 조회가 방금 insert를 봐야 한다
+    client.create_collection(
+        name, schema=schema, index_params=index_params, consistency_level="Strong"
+    )
     return name
 
 
@@ -80,6 +95,11 @@ def insert_children(rows: list[dict]) -> int:
     client = get_client()
     result = client.insert(get_collection(), rows)
     return int(result["insert_count"])
+
+
+def flush() -> None:
+    """insert된 데이터를 세그먼트로 확정한다 (적재 직후 전체 조회 정합성 보장)."""
+    get_client().flush(get_collection())
 
 
 def fetch_all_children(output_fields: list[str]) -> list[dict]:

@@ -61,7 +61,8 @@ def dense_retrieve(state: RetrievalState) -> dict:
         entity = hit.get("entity", {})
         candidates.append(
             {
-                "chunk_id": hit["id"],
+                # pymilvus는 PK를 "id"가 아니라 실제 필드명(chunk_id) 키로 반환한다
+                "chunk_id": hit["chunk_id"],
                 "dense_score": float(hit["distance"]),
                 **{field: entity.get(field) for field in _OUTPUT_FIELDS},
             }
