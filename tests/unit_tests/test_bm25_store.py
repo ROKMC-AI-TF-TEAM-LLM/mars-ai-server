@@ -32,10 +32,10 @@ def bm25_index_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     index_dir = tmp_path / "bm25_index"
     monkeypatch.setenv("BM25_INDEX_PATH", str(index_dir))
     get_config.cache_clear()
-    bm25_store._load_cached.cache_clear()
+    bm25_store._clear_cache()
     yield index_dir
     get_config.cache_clear()
-    bm25_store._load_cached.cache_clear()
+    bm25_store._clear_cache()
 
 
 def test_토큰화는_내용어만_남긴다() -> None:
@@ -63,6 +63,24 @@ def test_top_k가_코퍼스보다_커도_안전하다(bm25_index_dir: Path) -> N
     results = bm25_store.bm25_search("법인카드 한도", top_k=20)
     assert 1 <= len(results) <= len(_TEXTS)
     assert results[0]["chunk_id"] == "c3"
+
+
+def test_외부_프로세스가_인덱스를_갱신하면_자동_재로드된다(bm25_index_dir: Path) -> None:
+    """보안 회귀 테스트: reindex 스크립트(별도 프로세스)가 ACL 메타데이터를
+    갱신했는데 서버가 낡은 캐시로 검색하면 DEPT_ONLY가 노출될 수 있다.
+    corpus mtime이 바뀌면 캐시를 자동 재로드해야 한다."""
+    bm25_store.build_bm25_index(_TEXTS, _METAS)
+    bm25_store.bm25_search("육아휴직", top_k=3)  # 캐시 적재
+    stale = bm25_store._cached
+
+    # 별도 프로세스의 재빌드 시뮬레이션: visibility 변경 후 캐시를 낡은 값으로 되돌린다
+    new_metas = [{**m, "visibility": "DEPT_ONLY"} for m in _METAS]
+    bm25_store.build_bm25_index(_TEXTS, new_metas)
+    bm25_store._cached = stale
+
+    results = bm25_store.bm25_search("육아휴직 기간", top_k=3)
+    assert results
+    assert all(r["visibility"] == "DEPT_ONLY" for r in results)  # 새 메타데이터로 재로드됨
 
 
 def test_인덱스가_없으면_None과_빈_결과(bm25_index_dir: Path) -> None:
