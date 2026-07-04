@@ -29,6 +29,17 @@ make format        # ruff format
 langgraph dev      # 그래프 시각화 디버깅 (개발 노트북 전용)
 ```
 
+## 개발 노트북에서 LLM 띄우기 (선택)
+
+Windows에서는 vLLM 실행이 불가하므로, 프롬프트/로직 검증용으로 llama.cpp를 쓴다:
+
+1. `models/A.X-4.0-Light-Q4_K_M.gguf` (GGUF Q4_K_M) 준비
+2. llama.cpp 릴리스 바이너리를 `tools/llama.cpp/`에 압축 해제
+3. `powershell -File serving\start_llm_dev.ps1` → 8000 포트, `.env` 수정 불필요
+
+tool-calling 동작은 vLLM 파서와 다를 수 있으므로 노트북 통과는 잠정 통과로
+취급한다 (roadmap.md 4단계 주의사항).
+
 ## 실행 (L40 서버)
 
 네 개의 독립 프로세스를 같은 서버에서 기동한다 (architecture.md §2):
