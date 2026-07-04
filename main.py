@@ -43,6 +43,10 @@ app.add_middleware(
 # text 이벤트 분할: 문장 경계가 없을 때의 조각 길이 상한 (interfaces.md §4)
 _MAX_PIECE_CHARS = 80
 
+# text 이벤트 간 전송 간격(초). 0이면 조각들이 사실상 한 번에 도착해
+# 프론트에서 점진 표시가 안 된다. 문장 단위 순차 전송의 체감을 만든다
+_STREAM_TEXT_INTERVAL_SECONDS = 0.03
+
 # 문장 경계 분할: 마침표류 뒤 공백까지 포함해 세그먼트를 만들고,
 # 이어 붙이면 원문과 동일해지도록 잔여 텍스트도 세그먼트로 잡는다
 _SENTENCE_RE = re.compile(r"[^.!?]*[.!?]+\s*|[^.!?]+\s*$")
@@ -96,10 +100,19 @@ def split_for_stream(text: str) -> list[str]:
 
 
 async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → 'data: [DONE]\n\n'."""
-    for piece in split_for_stream(final_answer):
+    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → 'data: [DONE]\n\n'.
+
+    조각 사이에 짧은 간격을 두어 TCP 병합 없이 순차 도착하게 한다.
+    """
+    pieces = split_for_stream(final_answer)
+    logger.debug("SSE 스트리밍 시작: text %d조각, sources %d건", len(pieces), len(sources))
+    for index, piece in enumerate(pieces, start=1):
+        logger.debug("SSE text [%d/%d] (%d자): %s", index, len(pieces), len(piece), piece)
         yield sse_event({"type": "text", "content": piece})
+        await asyncio.sleep(_STREAM_TEXT_INTERVAL_SECONDS)
+    logger.debug("SSE sources: %s", [s["name"] for s in sources])
     yield sse_event({"type": "sources", "items": sources})
+    logger.debug("SSE [DONE]")
     yield "data: [DONE]\n\n"
 
 
