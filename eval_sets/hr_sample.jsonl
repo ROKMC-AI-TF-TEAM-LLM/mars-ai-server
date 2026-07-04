@@ -1,0 +1,6 @@
+{"question": "육아휴직은 최대 얼마나 쓸 수 있나요?", "ground_truth": "육아휴직은 자녀 1명당 최대 1년까지 사용할 수 있다.", "user_department": "HR_TEAM", "domain": "HR"}
+{"question": "연차가 다음 해로 넘어가면 며칠까지 인정되나요?", "ground_truth": "미사용 연차는 다음 해로 최대 5일까지 이월할 수 있다.", "user_department": "HR_TEAM", "domain": "HR"}
+{"question": "아이 때문에 회사를 좀 쉬고 싶은데 가능한 제도가 있나요?", "ground_truth": "자녀 양육을 위한 육아휴직 제도를 사용할 수 있으며, 자녀 1명당 최대 1년까지 가능하다.", "user_department": "HR_TEAM", "domain": "HR"}
+{"question": "배우자 출산휴가는 며칠인가요?", "ground_truth": "배우자 출산 시 10일의 휴가가 부여되며 분할 사용이 가능하다.", "user_department": "HR_TEAM", "domain": "HR"}
+{"question": "몸이 아파서 오래 쉬어야 할 때 어떤 휴가를 쓰나요?", "ground_truth": "업무 외 질병은 연 60일 한도의 병가를 사용할 수 있으며, 3일 초과 시 진단서 제출이 필요하다.", "user_department": "HR_TEAM", "domain": "HR"}
+{"question": "경조휴가 중 본인 결혼은 며칠 쉴 수 있나요?", "ground_truth": "본인 결혼 시 5일의 경조휴가가 부여된다.", "user_department": "HR_TEAM", "domain": "HR"}

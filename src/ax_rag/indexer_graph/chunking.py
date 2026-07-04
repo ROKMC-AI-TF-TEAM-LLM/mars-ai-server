@@ -47,6 +47,33 @@ def _split(text: str, chunk_size_tokens: int, overlap_tokens: int) -> list[str]:
     return [piece.strip() for piece in splitter.split_text(text) if piece.strip()]
 
 
+def parse_markdown_sections(text: str) -> list[dict] | None:
+    """`## ` 헤딩 기준 섹션 분해. 헤딩이 하나도 없으면 None (통짜 처리).
+
+    적재 스크립트(bulk_ingest, reindex_document)가 .md 파일에 사용한다.
+    """
+    sections: list[dict] = []
+    current_title: str | None = None
+    current_lines: list[str] = []
+
+    for line in text.splitlines():
+        if line.startswith("## "):
+            body = "\n".join(current_lines).strip()
+            if body:
+                sections.append({"title": current_title, "text": body})
+            current_title = line.removeprefix("## ").strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    body = "\n".join(current_lines).strip()
+    if body:
+        sections.append({"title": current_title, "text": body})
+
+    has_heading = any(section["title"] for section in sections)
+    return sections if has_heading else None
+
+
 def chunk_document(
     text: str,
     source_doc: str,

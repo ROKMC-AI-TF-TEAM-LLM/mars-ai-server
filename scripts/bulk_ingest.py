@@ -15,32 +15,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from ax_rag.indexer_graph.chunking import parse_markdown_sections
 from ax_rag.indexer_graph.graph import graph
 from ax_rag.shared.config import DOMAINS
-
-
-def parse_markdown_sections(text: str) -> list[dict] | None:
-    """`## ` 헤딩 기준 섹션 분해. 헤딩이 하나도 없으면 None (통짜 처리)."""
-    sections: list[dict] = []
-    current_title: str | None = None
-    current_lines: list[str] = []
-
-    for line in text.splitlines():
-        if line.startswith("## "):
-            body = "\n".join(current_lines).strip()
-            if body:
-                sections.append({"title": current_title, "text": body})
-            current_title = line.removeprefix("## ").strip()
-            current_lines = []
-        else:
-            current_lines.append(line)
-
-    body = "\n".join(current_lines).strip()
-    if body:
-        sections.append({"title": current_title, "text": body})
-
-    has_heading = any(section["title"] for section in sections)
-    return sections if has_heading else None
 
 
 def main() -> int:
