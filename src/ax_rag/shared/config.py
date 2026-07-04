@@ -39,10 +39,12 @@ class Config:
     # --- 임베딩 서버 (BGE-M3) ---
     EMBEDDING_SERVER_URL: str
     EMBEDDING_DEVICE: str
+    EMBEDDING_MODEL_PATH: str  # 로컬 경로만 허용 (Hub ID 금지)
 
     # --- 리랭커 서버 (bge-reranker-v2-m3) ---
     RERANKER_SERVER_URL: str
     RERANKER_DEVICE: str
+    RERANKER_MODEL_PATH: str  # 로컬 경로만 허용 (Hub ID 금지)
     RERANK_TOP_K: int
     RERANK_TOP_N: int
 
@@ -102,8 +104,10 @@ def get_config() -> Config:
         AX_API_KEY=_env_str("AX_API_KEY", "EMPTY"),
         EMBEDDING_SERVER_URL=_env_str("EMBEDDING_SERVER_URL", "http://localhost:8001/embed"),
         EMBEDDING_DEVICE=_env_str("EMBEDDING_DEVICE", "cuda"),
+        EMBEDDING_MODEL_PATH=_env_str("EMBEDDING_MODEL_PATH", "./models/bge-m3"),
         RERANKER_SERVER_URL=_env_str("RERANKER_SERVER_URL", "http://localhost:8002/rerank"),
         RERANKER_DEVICE=_env_str("RERANKER_DEVICE", "cuda"),
+        RERANKER_MODEL_PATH=_env_str("RERANKER_MODEL_PATH", "./models/bge-reranker-v2-m3"),
         RERANK_TOP_K=_env_int("RERANK_TOP_K", 20),
         RERANK_TOP_N=_env_int("RERANK_TOP_N", 5),
         MILVUS_LITE_PATH=_env_str("MILVUS_LITE_PATH", "./data/milvus_ax.db"),

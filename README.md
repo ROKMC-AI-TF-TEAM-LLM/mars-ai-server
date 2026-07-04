@@ -13,6 +13,7 @@ LangGraph + vLLM(A.X 4.0 Light) + Milvus Lite + BGE-M3 + bge-reranker-v2-m3 + bm
 ```bash
 python -m venv .venv          # Python 3.11 필수
 source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install "setuptools==75.6.0"  # 주의: pymilvus 2.5.4는 pkg_resources 필요 (setuptools 81+에서 제거됨)
 pip install -e ".[dev]"       # 개발 도구 (pytest, ruff)
 pip install -r requirements.txt   # 런타임 의존성 (L40 서버 기준)
 cp .env.example .env
