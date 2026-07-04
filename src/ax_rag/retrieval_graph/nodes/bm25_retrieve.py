@@ -5,13 +5,12 @@
 
 from __future__ import annotations
 
-import logging
-
 from ax_rag.retrieval_graph.acl import filter_by_acl
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.shared.bm25_store import bm25_search
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 검색 깊이 (architecture.md §4: bm25 top_k=20)
 TOP_K = 20

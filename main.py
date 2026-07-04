@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 from collections.abc import AsyncIterator
 
@@ -24,11 +23,11 @@ from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
 from ax_rag.shared.audit_log import log_query
-from ax_rag.shared.logging_setup import setup_logging
+from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # uvicorn으로 실행돼도 통일 포맷(시각 | 레벨 | 모듈 | 메시지)이 적용되게 임포트 시점에 설정
 setup_logging()
-logger = logging.getLogger("main")
+logger = get_logger("main")
 
 app = FastAPI(title="A.X RAG 서버")
 

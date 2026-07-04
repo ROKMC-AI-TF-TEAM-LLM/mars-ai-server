@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 import uuid
 
@@ -16,8 +15,9 @@ from ax_rag.indexer_graph.chunking import chunk_parent_child
 from ax_rag.indexer_graph.state import IndexState
 from ax_rag.shared import bm25_store, parent_store, vectorstore
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 임베딩 서버 1회 호출당 텍스트 수 (서버 내부 배치와 별개의 요청 분할 단위)
 _EMBED_REQUEST_BATCH = 64

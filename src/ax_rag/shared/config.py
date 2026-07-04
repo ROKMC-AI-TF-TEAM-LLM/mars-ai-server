@@ -65,6 +65,9 @@ class Config:
     # --- 외부 서비스 호출 공통 timeout (초) ---
     HTTP_TIMEOUT_SECONDS: float = 60.0
 
+    # --- 로그 레벨 (DEBUG/INFO/WARNING/ERROR) ---
+    LOG_LEVEL: str = "INFO"
+
     def __post_init__(self) -> None:
         """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다."""
         for name in ("AX_BASE_URL", "EMBEDDING_SERVER_URL", "RERANKER_SERVER_URL"):
@@ -117,4 +120,5 @@ def get_config() -> Config:
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         HTTP_TIMEOUT_SECONDS=_env_float("HTTP_TIMEOUT_SECONDS", 60.0),
+        LOG_LEVEL=_env_str("LOG_LEVEL", "INFO"),
     )

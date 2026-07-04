@@ -6,15 +6,14 @@
 
 from __future__ import annotations
 
-import logging
-
 import requests
 
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.shared import parent_store
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _score_candidates(query: str, passages: list[str]) -> list[float]:

@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from collections.abc import Callable
 from typing import Any
@@ -19,7 +18,9 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ValidationError
 
-logger = logging.getLogger(__name__)
+from ax_rag.shared.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 # 본문 중 가장 바깥 중괄호 블록 (```json 펜스 유무 무관)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)

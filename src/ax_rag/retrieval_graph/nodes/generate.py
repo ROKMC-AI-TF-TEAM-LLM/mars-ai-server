@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ax_rag.retrieval_graph.budget import trim_history
@@ -20,8 +18,9 @@ from ax_rag.retrieval_graph.prompts import (
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def generate(state: RetrievalState) -> dict:

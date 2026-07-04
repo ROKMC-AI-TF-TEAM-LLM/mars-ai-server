@@ -9,7 +9,6 @@ fail-closed: 어느 단계든 판정 불가(빈 답변, tool_call 부재, 예외
 
 from __future__ import annotations
 
-import logging
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -23,8 +22,9 @@ from ax_rag.retrieval_graph.prompts import (
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.retrieval_graph.tool_fallback import call_with_schema
 from ax_rag.shared.llm_client import get_llm
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class VerifyAnswer(BaseModel):

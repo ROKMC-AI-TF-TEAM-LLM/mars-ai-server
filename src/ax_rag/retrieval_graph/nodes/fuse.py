@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 from ax_rag.retrieval_graph.fusion import rrf_fuse
 from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def fuse(state: RetrievalState) -> dict:

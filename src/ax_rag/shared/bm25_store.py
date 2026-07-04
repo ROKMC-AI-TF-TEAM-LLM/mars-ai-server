@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from functools import lru_cache
 from pathlib import Path
 
@@ -18,8 +17,9 @@ import bm25s
 from kiwipiepy import Kiwi
 
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 검색 신호가 되는 내용어 품사 접두 (명사/대명사/수사/동사/형용사/어근/외국어/숫자/한자)
 _CONTENT_TAG_PREFIXES = ("NN", "NP", "NR", "VV", "VA", "XR", "SL", "SN", "SH")

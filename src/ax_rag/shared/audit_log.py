@@ -7,13 +7,13 @@ sources, grounded 여부를 기록한다.
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def log_query(

@@ -5,16 +5,15 @@ ACL은 Milvus 스칼라 필터로 적용한다 (architecture.md §4).
 
 from __future__ import annotations
 
-import logging
-
 import requests
 
 from ax_rag.retrieval_graph.acl import build_acl_filter_expr
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
 from ax_rag.shared.vectorstore import get_client, get_collection
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 검색 깊이 (architecture.md §4: dense top_k=20)
 TOP_K = 20

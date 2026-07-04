@@ -11,8 +11,6 @@ dense와 bm25는 독립이라 병렬 가능하지만 구현 단순성을 위해 
 
 from __future__ import annotations
 
-import logging
-
 from langgraph.graph import END, START, StateGraph
 
 from ax_rag.retrieval_graph.nodes.bm25_retrieve import bm25_retrieve
@@ -25,8 +23,9 @@ from ax_rag.retrieval_graph.nodes.verify import verify
 from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def finalize(state: RetrievalState) -> dict:

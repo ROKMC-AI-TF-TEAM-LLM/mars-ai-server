@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,7 +18,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from ax_rag.shared.config import get_config
-from ax_rag.shared.logging_setup import setup_logging
+from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # 에어갭 방어: FlagEmbedding은 _load_model에서 지연 임포트되므로,
 # 그 전에 모듈 로드 시점에 오프라인 모드를 강제해 둔다
@@ -27,7 +26,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 setup_logging()
-logger = logging.getLogger("reranker_server")
+logger = get_logger("reranker_server")
 
 PORT = 8002  # interfaces.md §1 고정 배정
 BATCH_SIZE = 32  # RERANK_TOP_K=20이므로 통상 1배치로 처리된다

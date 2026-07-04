@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,7 +18,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from ax_rag.shared.config import get_config
-from ax_rag.shared.logging_setup import setup_logging
+from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # 에어갭 방어: FlagEmbedding은 _load_model에서 지연 임포트되므로,
 # 그 전에 모듈 로드 시점에 오프라인 모드를 강제해 둔다
@@ -27,7 +26,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 setup_logging()
-logger = logging.getLogger("embedding_server")
+logger = get_logger("embedding_server")
 
 PORT = 8001  # interfaces.md §1 고정 배정
 EMBED_DIM = 1024  # BGE-M3 dense 차원
