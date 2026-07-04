@@ -1,6 +1,7 @@
 """retrieval_graph 전체 조립 (architecture.md §4).
 
-route → dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
+route ─(SMALLTALK)→ smalltalk → END
+  └─(문서 도메인)→ dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
 verify 후 조건부 분기:
 - grounded=True            → finalize (확정)
 - 실패 + 재시도 여유 있음  → increment_retry → generate 재실행
@@ -19,10 +20,11 @@ from ax_rag.retrieval_graph.nodes.fuse import fuse
 from ax_rag.retrieval_graph.nodes.generate import generate
 from ax_rag.retrieval_graph.nodes.rerank import rerank
 from ax_rag.retrieval_graph.nodes.router import route
+from ax_rag.retrieval_graph.nodes.smalltalk import smalltalk
 from ax_rag.retrieval_graph.nodes.verify import verify
 from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
 from ax_rag.retrieval_graph.state import RetrievalState
-from ax_rag.shared.config import get_config
+from ax_rag.shared.config import SMALLTALK_DOMAIN, get_config
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -48,6 +50,13 @@ def fallback(state: RetrievalState) -> dict:
     return {"final_answer": FALLBACK_ANSWER}
 
 
+def after_route(state: RetrievalState) -> str:
+    """route 결과 분기: 잡담이면 검색·검증 없이 smalltalk으로 직행한다."""
+    if state.get("domain") == SMALLTALK_DOMAIN:
+        return "smalltalk"
+    return "dense_retrieve"
+
+
 def after_verify(state: RetrievalState) -> str:
     """verify 결과에 따른 분기: finalize / increment_retry / fallback."""
     if state.get("grounded"):
@@ -60,6 +69,7 @@ def after_verify(state: RetrievalState) -> str:
 def _build_graph() -> StateGraph:
     builder = StateGraph(RetrievalState)
     builder.add_node("route", route)
+    builder.add_node("smalltalk", smalltalk)
     builder.add_node("dense_retrieve", dense_retrieve)
     builder.add_node("bm25_retrieve", bm25_retrieve)
     builder.add_node("fuse", fuse)
@@ -71,7 +81,12 @@ def _build_graph() -> StateGraph:
     builder.add_node("fallback", fallback)
 
     builder.add_edge(START, "route")
-    builder.add_edge("route", "dense_retrieve")
+    builder.add_conditional_edges(
+        "route",
+        after_route,
+        {"smalltalk": "smalltalk", "dense_retrieve": "dense_retrieve"},
+    )
+    builder.add_edge("smalltalk", END)
     builder.add_edge("dense_retrieve", "bm25_retrieve")
     builder.add_edge("bm25_retrieve", "fuse")
     builder.add_edge("fuse", "rerank")

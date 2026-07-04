@@ -9,7 +9,9 @@ import pytest
 
 from ax_rag.retrieval_graph.nodes import generate as generate_module
 from ax_rag.retrieval_graph.nodes import router as router_module
+from ax_rag.retrieval_graph.nodes import smalltalk as smalltalk_module
 from ax_rag.retrieval_graph.nodes import verify as verify_module
+from ax_rag.retrieval_graph.prompts import SMALLTALK_DEFAULT_ANSWER
 
 
 class _FakeLLM:
@@ -69,6 +71,15 @@ def test_route_미지의_도메인은_GENERAL로_강등된다(monkeypatch: pytes
     assert result["domain"] == "GENERAL"
 
 
+def test_route_SMALLTALK_분류를_허용한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeLLM(
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "인사", "domain": "SMALLTALK"})
+    )
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": "내 이름은 원석이야"})
+    assert result["domain"] == "SMALLTALK"
+
+
 def test_route_tool_call_부재_시_원본과_GENERAL_폴백(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(SimpleNamespace(tool_calls=[], content="그냥 텍스트 응답"))
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
@@ -122,6 +133,30 @@ def test_generate_근거_없으면_빈_초안(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(generate_module, "get_llm", boom)
     result = generate_module.generate({"question": "질문", "retrieved_chunks": []})
     assert result == {"draft_answer": ""}
+
+
+# ---------- smalltalk ----------
+
+
+def test_smalltalk은_검색_없이_응답하고_근거를_주장하지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeLLM(
+        SimpleNamespace(content="반가워요, 원석님! 무엇을 도와드릴까요?", tool_calls=[])
+    )
+    monkeypatch.setattr(smalltalk_module, "get_llm", lambda: fake)
+    result = smalltalk_module.smalltalk({"question": "내 이름은 원석이야"})
+    assert result["final_answer"] == "반가워요, 원석님! 무엇을 도와드릴까요?"
+    assert result["grounded"] is False  # sources 미노출 보장
+    assert result["retrieved_chunks"] == []
+
+
+def test_smalltalk_LLM_실패_시_기본_인사로_폴백(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeLLM(exc=RuntimeError("vLLM 연결 실패"))
+    monkeypatch.setattr(smalltalk_module, "get_llm", lambda: fake)
+    result = smalltalk_module.smalltalk({"question": "안녕"})
+    assert result["final_answer"] == SMALLTALK_DEFAULT_ANSWER
+    assert result["grounded"] is False
 
 
 # ---------- verify ----------

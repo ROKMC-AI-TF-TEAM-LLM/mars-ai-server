@@ -241,7 +241,10 @@ data: [DONE]
 class ClassifyAndRewrite(BaseModel):
     """멀티턴 맥락 해소 + 구어체 정규화 + 도메인 분류"""
     rewritten_query: str   # 검색에 최적화된 쿼리
-    domain: str            # "HR" | "TECH" | "FINANCE_LEGAL" | "GENERAL"
+    domain: str            # "HR" | "TECH" | "FINANCE_LEGAL" | "GENERAL" | "SMALLTALK"
+    # SMALLTALK: 인사/잡담 등 문서 검색이 불필요한 대화. 검색·검증을 건너뛰고
+    # smalltalk 노드가 직접 응답하며 sources는 비운다. Milvus domain 필드에는
+    # 쓰지 않는 라우팅 전용 값 (config.DOMAINS에는 포함되지 않음)
 
 class VerifyAnswer(BaseModel):
     """답변이 문서에 근거하는지 검증"""

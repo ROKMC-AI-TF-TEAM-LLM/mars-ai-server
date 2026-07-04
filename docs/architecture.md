@@ -85,10 +85,11 @@ ax-rag-multiagent/
     └── integration_tests/
 ```
 
-## 4. retrieval_graph 흐름 (9노드 + 조건부 분기)
+## 4. retrieval_graph 흐름 (10노드 + 조건부 분기)
 
 ```
-route → dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
+route ─(SMALLTALK)→ smalltalk ──────────────────────────────────────→ END
+  └──→ dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
                                                               ↑          │
                                                     (실패, 재시도 여유)  │
                                                        increment_retry ←─┤
@@ -100,7 +101,9 @@ route → dense_retrieve → bm25_retrieve → fuse → rerank → generate → 
 
 1. **route** — 질문 + 대화 이력 → `rewritten_query` + `domain`을 한 번의
    tool-call(ClassifyAndRewrite)로. 멀티턴 맥락 해소 + 구어체 정규화 + 도메인 분류.
-   tool_call 없으면 원본 질문 + GENERAL 폴백
+   tool_call 없으면 원본 질문 + GENERAL 폴백.
+   SMALLTALK(인사/잡담) 분류 시 검색·검증을 건너뛰고 **smalltalk** 노드가
+   직접 짧게 응답한다 (문서 근거 주장 금지, sources 비움, grounded=False)
 2. **dense_retrieve** — rewritten_query 임베딩 → Milvus Lite 검색.
    ACL은 Milvus 스칼라 필터로 적용. top_k=20
 3. **bm25_retrieve** — Kiwi 토큰화 → bm25s 검색 → **ACL 후처리 필터 필수** → top_k=20.

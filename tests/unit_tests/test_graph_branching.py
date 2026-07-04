@@ -2,8 +2,23 @@
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.graph import after_verify, fallback, finalize, increment_retry
+from ax_rag.retrieval_graph.graph import (
+    after_route,
+    after_verify,
+    fallback,
+    finalize,
+    increment_retry,
+)
 from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
+
+
+def test_잡담이면_smalltalk으로_직행한다() -> None:
+    assert after_route({"domain": "SMALLTALK"}) == "smalltalk"
+
+
+def test_문서_도메인이면_검색_경로로_간다() -> None:
+    for domain in ("HR", "TECH", "FINANCE_LEGAL", "GENERAL", None):
+        assert after_route({"domain": domain}) == "dense_retrieve"
 
 
 def test_검증_통과면_finalize() -> None:

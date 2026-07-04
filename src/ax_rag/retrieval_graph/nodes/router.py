@@ -13,7 +13,7 @@ from ax_rag.retrieval_graph.budget import trim_history
 from ax_rag.retrieval_graph.prompts import ROUTER_SYSTEM_PROMPT, history_to_messages
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.retrieval_graph.tool_fallback import call_with_schema
-from ax_rag.shared.config import DOMAINS, get_config
+from ax_rag.shared.config import DOMAINS, SMALLTALK_DOMAIN, get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
@@ -24,7 +24,7 @@ class ClassifyAndRewrite(BaseModel):
     """멀티턴 맥락 해소 + 구어체 정규화 + 도메인 분류"""
 
     rewritten_query: str  # 검색에 최적화된 쿼리
-    domain: str  # "HR" | "TECH" | "FINANCE_LEGAL" | "GENERAL"
+    domain: str  # "HR" | "TECH" | "FINANCE_LEGAL" | "GENERAL" | "SMALLTALK"
 
 
 def route(state: RetrievalState) -> dict:
@@ -55,7 +55,7 @@ def route(state: RetrievalState) -> dict:
 
         rewritten = str(args.get("rewritten_query") or "").strip() or question
         domain = str(args.get("domain") or "").strip().upper()
-        if domain not in DOMAINS:
+        if domain not in (*DOMAINS, SMALLTALK_DOMAIN):
             logger.warning("라우터가 미지의 도메인 반환: %r → GENERAL", domain)
             domain = "GENERAL"
         logger.info("라우팅: domain=%s, rewritten=%s", domain, rewritten)
