@@ -18,9 +18,11 @@ from pathlib import Path
 from ax_rag.indexer_graph.chunking import parse_markdown_sections
 from ax_rag.indexer_graph.graph import graph
 from ax_rag.shared.config import DOMAINS
+from ax_rag.shared.logging_setup import setup_logging
 
 
 def main() -> int:
+    setup_logging()
     parser = argparse.ArgumentParser(description="문서 일괄 적재 (indexer_graph 호출)")
     parser.add_argument("--dir", required=True, help="적재할 .md/.txt 문서 디렉터리")
     parser.add_argument("--domain", required=True, choices=DOMAINS, help="문서 도메인")

@@ -22,9 +22,11 @@ from ax_rag.indexer_graph.chunking import parse_markdown_sections
 from ax_rag.indexer_graph.graph import graph
 from ax_rag.shared import parent_store, vectorstore
 from ax_rag.shared.config import DOMAINS
+from ax_rag.shared.logging_setup import setup_logging
 
 
 def main() -> int:
+    setup_logging()
     parser = argparse.ArgumentParser(description="문서 갱신 (삭제 후 재적재)")
     parser.add_argument("--file", required=True, help="재적재할 .md/.txt 파일")
     parser.add_argument("--domain", required=True, choices=DOMAINS, help="문서 도메인")

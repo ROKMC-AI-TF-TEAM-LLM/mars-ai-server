@@ -19,12 +19,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import setup_logging
 
 # 에어갭 방어: FlagEmbedding은 _load_model에서 지연 임포트되므로,
 # 그 전에 모듈 로드 시점에 오프라인 모드를 강제해 둔다
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
+setup_logging()
 logger = logging.getLogger("embedding_server")
 
 PORT = 8001  # interfaces.md §1 고정 배정
@@ -94,6 +96,5 @@ def embed(request: EmbedRequest) -> EmbedResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # 같은 서버의 LangGraph 앱만 호출하므로 루프백에만 바인딩한다 (에어갭)
     uvicorn.run(app, host="127.0.0.1", port=PORT)

@@ -31,6 +31,7 @@ from ax_rag.retrieval_graph.nodes.rerank import rerank as rerank_node
 from ax_rag.shared import parent_store
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
+from ax_rag.shared.logging_setup import setup_logging
 
 TOP_N_WITHOUT_RERANKER = 5  # 리랭커 OFF일 때 RRF 순서 그대로 상위 5개 사용
 
@@ -86,6 +87,7 @@ def run_pipeline(
 
 
 def main() -> int:
+    setup_logging()
     parser = argparse.ArgumentParser(description="RAGAS 기반 RAG 평가")
     parser.add_argument("--eval-set", default="eval_sets/hr_sample.jsonl")
     parser.add_argument("--mode", choices=["hybrid", "dense"], default="hybrid")
