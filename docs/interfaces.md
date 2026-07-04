@@ -151,7 +151,7 @@ def sse_event(payload: dict) -> str:
     """dict → 'data: {json}\n\n' SSE 프레임. ensure_ascii=False."""
 
 async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → 'data: [DONE]\n\n'.
+    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → {"type": "done"} 종료 이벤트.
     분할 단위는 문장 경계 우선(다./요./.), 없으면 80자 내외."""
 ```
 
@@ -208,7 +208,7 @@ data: {"type":"text","content":" 최대 1년까지 사용할 수 있습니다."}
 
 data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
 
-data: [DONE]
+data: {"type":"done"}
 ```
 
 오류 시:
@@ -216,8 +216,11 @@ data: [DONE]
 ```
 data: {"type":"error","message":"오류 내용"}
 
-data: [DONE]
+data: {"type":"done"}
 ```
+
+종료 신호는 OpenAI 스타일의 `data: [DONE]` 문자열이 아니라 **JSON 이벤트
+`{"type":"done"}`** 이다 (미들웨어 파서가 모든 프레임을 JSON으로 처리).
 
 **전송 규칙 (verify와의 정합)**:
 
@@ -226,7 +229,7 @@ data: [DONE]
   generate가 재실행될 때 이미 흘려보낸 텍스트를 되돌릴 방법이 없다.
   따라서 파이프라인은 finalize(또는 fallback) 도달 후 확정된 답변을
   text 이벤트로 분할해 순서대로 전송한다
-- `sources`는 스트림 마지막에 정확히 1회, `[DONE]` 직전에 전송
+- `sources`는 스트림 마지막에 정확히 1회, `done` 이벤트 직전에 전송
 - `page` 필드: 청크 메타데이터에 페이지 정보가 없으면 `null`.
   (페이지 추적이 필요하면 인덱싱 단계에서 chunk 메타데이터에
   `page` 필드 추가 — 현재 스키마엔 없음, 미확정 항목)

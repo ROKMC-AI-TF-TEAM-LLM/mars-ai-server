@@ -542,7 +542,7 @@ async for frame in stream_answer(final_answer, sources): # ④ SSE 재생
 - `split_for_stream(text)`: 문장 경계(`[.!?]` + 뒤 공백 포함) 우선 분할,
   경계 없는 긴 덩어리는 80자 강제 절단. **조각을 이어 붙이면 원문과
   정확히 같다** (공백 보존 — 유닛 테스트로 고정).
-- `stream_answer()`: text 조각들 → sources 1회 → `data: [DONE]`.
+- `stream_answer()`: text 조각들 → sources 1회 → `{"type":"done"}` 종료 이벤트.
   조각 사이 `STREAM_TEXT_INTERVAL_MS`(기본 200ms) 대기 — 이게 없으면
   TCP에서 한 덩어리로 합쳐져 프론트에 타자기 효과가 안 보인다.
   각 조각은 DEBUG 로그로 남는다 (`LOG_LEVEL=DEBUG`일 때).

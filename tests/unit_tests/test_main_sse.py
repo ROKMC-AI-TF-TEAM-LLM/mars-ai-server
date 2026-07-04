@@ -77,17 +77,18 @@ def _collect(final_answer: str, sources: list[dict]) -> list[str]:
     return asyncio.run(gather())
 
 
-def test_이벤트_순서는_text_sources_DONE이다() -> None:
+def test_이벤트_순서는_text_sources_done이다() -> None:
     frames = _collect(
         "육아휴직은 최대 1년입니다. 신청은 인사팀에 하세요.",
         [{"name": "휴가규정.pdf", "page": None}],
     )
-    assert frames[-1] == "data: [DONE]\n\n"
+    # 종료 신호는 [DONE] 문자열이 아니라 {"type": "done"} JSON 이벤트 (미들웨어 계약)
+    assert json.loads(frames[-1].removeprefix("data: ").strip()) == {"type": "done"}
 
     payloads = [json.loads(f.removeprefix("data: ").strip()) for f in frames[:-1]]
     types = [p["type"] for p in payloads]
     assert types.count("sources") == 1  # sources는 정확히 1회
-    assert types[-1] == "sources"  # [DONE] 직전
+    assert types[-1] == "sources"  # done 직전
     assert all(t == "text" for t in types[:-1]) and len(types) >= 2
 
     # text 조각을 합치면 원문 복원

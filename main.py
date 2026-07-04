@@ -2,7 +2,7 @@
 
 미들웨어와의 계약:
 - 요청은 JSON(question, user_department, messages[human|ai])
-- 응답은 SSE(text/event-stream): text 이벤트 N회 → sources 1회 → data: [DONE]
+- 응답은 SSE(text/event-stream): text 이벤트 N회 → sources 1회 → {"type": "done"}
 - 토큰 실시간 스트리밍이 아니라 verify 통과 후 분할 전송이다 (architecture.md §8)
 
 ★ 단일 워커 강제: Milvus Lite 파일 락 충돌 때문에 uvicorn 멀티 워커 금지.
@@ -97,7 +97,7 @@ def split_for_stream(text: str) -> list[str]:
 
 
 async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → 'data: [DONE]\n\n'.
+    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → done 이벤트로 종료.
 
     조각 사이 간격(config.STREAM_TEXT_INTERVAL_MS)을 두어 TCP 병합 없이
     순차 도착하게 하고, 프론트에서 타자기 효과가 보이게 한다.
@@ -111,8 +111,8 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
         await asyncio.sleep(interval_seconds)
     logger.debug("SSE sources: %s", [s["name"] for s in sources])
     yield sse_event({"type": "sources", "items": sources})
-    logger.debug("SSE [DONE]")
-    yield "data: [DONE]\n\n"
+    logger.debug("SSE done")
+    yield sse_event({"type": "done"})
 
 
 def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
@@ -139,7 +139,7 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
     """그래프를 완주(invoke)한 뒤 확정 답변을 SSE로 분할 전송한다.
 
     fallback 답변도 정상 text로 보낸다. error 이벤트는 파이프라인
-    예외(서비스 다운, 타임아웃 등)에만 사용하고, 스트림은 항상 [DONE]으로 끝난다.
+    예외(서비스 다운, 타임아웃 등)에만 사용하고, 스트림은 항상 done 이벤트로 끝난다.
     """
     user_department = request.user_department or ""
     try:
@@ -175,7 +175,7 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
         except Exception:
             logger.exception("감사 로그 기록 실패")
         yield sse_event({"type": "error", "message": "내부 오류로 답변을 생성하지 못했습니다."})
-        yield "data: [DONE]\n\n"
+        yield sse_event({"type": "done"})
 
 
 @app.get("/health")

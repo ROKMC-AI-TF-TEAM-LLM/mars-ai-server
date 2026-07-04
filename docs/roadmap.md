@@ -84,16 +84,16 @@
 - FastAPI `POST /query` — SSE StreamingResponse (interfaces.md §5 계약), `/health`
 - to_internal_history: 미들웨어 role(human/ai) → 내부 role(user/assistant) 변환
 - stream_answer: verify 통과 후 확정 답변을 문장 단위 text 이벤트로 분할 전송
-  → sources 1회 → `data: [DONE]`
-- 예외 처리: 파이프라인 예외 시 error 이벤트 + [DONE]으로 스트림 정상 종료
+  → sources 1회 → `{"type":"done"}` 종료 이벤트
+- 예외 처리: 파이프라인 예외 시 error 이벤트 + done 이벤트로 스트림 정상 종료
 - `X-Accel-Buffering: no` 헤더
 - shared/audit_log.py 연결: 모든 질의 기록
 - 단일 워커 강제 (실행 스크립트/문서에 명시, Milvus Lite 파일 락)
 
 완료 기준:
-- `curl -N`으로 이벤트 순서 확인: text 1개 이상 → sources 1회 → [DONE]
+- `curl -N`으로 이벤트 순서 확인: text 1개 이상 → sources 1회 → done 이벤트
 - user_department 누락 요청 시 visibility ALL 문서만 검색됨 (제한적 폴백 테스트)
-- 서비스 하나를 내려놓고 요청 시 error 이벤트 후 [DONE]으로 종료 (행 걸림 없음)
+- 서비스 하나를 내려놓고 요청 시 error 이벤트 후 done 이벤트로 종료 (행 걸림 없음)
 - audit_log.jsonl에 timestamp, user_department, question, domain, sources, grounded 기록됨
 - 유닛 테스트: to_internal_history role 변환, sse_event 프레임 형식,
   stream_answer 분할 경계

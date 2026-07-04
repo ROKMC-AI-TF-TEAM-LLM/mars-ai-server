@@ -13,7 +13,7 @@
 
 - 인증: 내부망 신뢰 기반. 별도 토큰 검증 없음 (미들웨어가 인증 완료 후 호출)
 - 프로토콜: **SSE 스트리밍** (미들웨어 기존 계약). 요청은 JSON,
-  응답은 text/event-stream — text 청크, sources 1회, error, `[DONE]` 종료 신호.
+  응답은 text/event-stream — text 청크, sources 1회, error, `{"type":"done"}` 종료 이벤트.
   상세는 interfaces.md §5
 
 ## 2. 프로세스 배치 (L40 한 대)
@@ -156,7 +156,7 @@ dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
   타입에 "이전 텍스트 취소" 신호가 없다. 토큰을 실시간으로 흘리면
   재시도 시 사용자가 이미 본 답변을 되돌릴 수 없다
 - 흐름: 그래프를 invoke로 완주 → finalize/fallback의 확정 답변을
-  문장 단위로 쪼개 text 이벤트로 순차 전송 → sources 1회 → [DONE]
+  문장 단위로 쪼개 text 이벤트로 순차 전송 → sources 1회 → done 이벤트
 - 파이프라인 예외(서비스 다운 등)만 error 이벤트. fallback 답변은 정상 text
 - `X-Accel-Buffering: no` 헤더 필수
 - 향후 진짜 토큰 스트리밍으로 가려면 미들웨어에 "reset" 류의 이벤트
