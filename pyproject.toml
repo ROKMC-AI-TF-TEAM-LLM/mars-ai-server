@@ -34,7 +34,7 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]  # "."는 루트의 main.py 테스트용
 # integration 마커는 기본 skip. 포함 실행은 `make test-all` (pytest -m "")
 addopts = "-m 'not integration'"
 markers = [
