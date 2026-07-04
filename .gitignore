@@ -1,0 +1,18 @@
+# 환경
+.env
+.venv/
+
+# 런타임 데이터 (Milvus Lite, BM25 인덱스, 감사 로그)
+data/
+
+# 파이썬
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# 도구 캐시
+.pytest_cache/
+.ruff_cache/
+.langgraph_api/
