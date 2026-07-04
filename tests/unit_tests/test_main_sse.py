@@ -105,7 +105,13 @@ def test_sources는_중복_없이_page_null로_만든다() -> None:
         {"text": "본문2", "source_doc": "휴가규정.pdf"},
         {"text": "본문3", "source_doc": "경비규정.pdf"},
     ]
-    assert main._build_sources(chunks) == [
+    assert main._build_sources(chunks, grounded=True) == [
         {"name": "휴가규정.pdf", "page": None},
         {"name": "경비규정.pdf", "page": None},
     ]
+
+
+def test_검증_미통과_답변에는_sources를_붙이지_않는다() -> None:
+    """fallback 답변에 검색 상위 문서가 출처로 노출되면 안 된다 (예: 잡담 질의)."""
+    chunks = [{"text": "본문", "source_doc": "휴가규정.pdf"}]
+    assert main._build_sources(chunks, grounded=False) == []

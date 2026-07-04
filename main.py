@@ -24,7 +24,10 @@ from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
 from ax_rag.shared.audit_log import log_query
+from ax_rag.shared.logging_setup import setup_logging
 
+# uvicorn으로 실행돼도 통일 포맷(시각 | 레벨 | 모듈 | 메시지)이 적용되게 임포트 시점에 설정
+setup_logging()
 logger = logging.getLogger("main")
 
 app = FastAPI(title="A.X RAG 서버")
@@ -101,11 +104,16 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
     yield "data: [DONE]\n\n"
 
 
-def _build_sources(retrieved_chunks: list[dict]) -> list[dict]:
+def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
     """근거 청크에서 중복 없는 sources 목록을 만든다.
 
+    sources는 "답변의 근거로 실제 사용된 문서"다. verify를 통과하지 못한
+    답변(fallback)은 검색 결과를 근거로 쓰지 않았으므로 빈 목록을 반환한다
+    (예: "안녕" 같은 잡담에 검색 상위 문서가 출처로 노출되는 것 방지).
     page는 청크 메타데이터에 페이지 정보가 없으므로 null (미확정 항목).
     """
+    if not grounded:
+        return []
     sources: list[dict] = []
     seen: set[str] = set()
     for chunk in retrieved_chunks:
@@ -132,13 +140,14 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
         # 동기 그래프를 스레드로 넘겨 이벤트 루프를 막지 않는다
         result = await asyncio.to_thread(graph.invoke, state)
 
-        sources = _build_sources(result.get("retrieved_chunks") or [])
+        grounded = bool(result.get("grounded"))
+        sources = _build_sources(result.get("retrieved_chunks") or [], grounded)
         log_query(
             user_department=user_department,
             question=request.question,
             domain=result.get("domain") or "GENERAL",
             sources=[s["name"] for s in sources],
-            grounded=bool(result.get("grounded")),
+            grounded=grounded,
         )
         async for frame in stream_answer(result.get("final_answer") or "", sources):
             yield frame
@@ -180,6 +189,5 @@ async def query(request: QueryRequest) -> StreamingResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # 단일 워커 강제 (Milvus Lite 파일 락). workers 인자를 절대 늘리지 말 것
     uvicorn.run(app, host="0.0.0.0", port=9000)
