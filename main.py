@@ -18,6 +18,7 @@ import re
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,15 @@ from ax_rag.shared.audit_log import log_query
 logger = logging.getLogger("main")
 
 app = FastAPI(title="A.X RAG 서버")
+
+# 브라우저 프론트가 직접 붙는 개발/데모용 CORS 허용.
+# 운영 경로는 미들웨어의 서버 간 호출이라 CORS가 관여하지 않는다 (내부망 신뢰)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # text 이벤트 분할: 문장 경계가 없을 때의 조각 길이 상한 (interfaces.md §4)
 _MAX_PIECE_CHARS = 80
