@@ -21,6 +21,7 @@ from ax_rag.retrieval_graph.prompts import (
     format_documents,
 )
 from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.retrieval_graph.tool_fallback import call_with_schema
 from ax_rag.shared.llm_client import get_llm
 
 logger = logging.getLogger(__name__)
@@ -84,8 +85,8 @@ def verify(state: RetrievalState) -> dict:
         return {"grounded": False, "verify_reason": f"규칙 검증 실패: {rule_reason}"}
 
     try:
-        llm = get_llm().bind_tools([VerifyAnswer])
-        response = llm.invoke(
+        # tool-call 우선, 실패 시 JSON 강제 모드 재시도 (tool_fallback.call_with_schema)
+        args = call_with_schema(
             [
                 SystemMessage(VERIFY_SYSTEM_PROMPT),
                 HumanMessage(
@@ -95,14 +96,14 @@ def verify(state: RetrievalState) -> dict:
                         draft_answer=draft,
                     )
                 ),
-            ]
+            ],
+            VerifyAnswer,
+            llm_getter=get_llm,
         )
-        tool_calls = getattr(response, "tool_calls", None) or []
-        if not tool_calls:
-            logger.warning("검증 tool_call 부재 → grounded=False (fail-closed)")
+        if args is None:
+            logger.warning("검증 tool_call/JSON 모두 실패 → grounded=False (fail-closed)")
             return {"grounded": False, "verify_reason": "검증 tool_call 부재 (fail-closed)"}
 
-        args = tool_calls[0].get("args") or {}
         grounded = bool(args.get("grounded", False))
         reason = str(args.get("reason", "")) or "사유 없음"
         logger.info("LLM 검증: grounded=%s, reason=%s", grounded, reason)

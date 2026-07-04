@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ax_rag.retrieval_graph.budget import trim_history
 from ax_rag.retrieval_graph.prompts import ROUTER_SYSTEM_PROMPT, history_to_messages
 from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.retrieval_graph.tool_fallback import call_with_schema
 from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.llm_client import get_llm
 
@@ -39,20 +40,20 @@ def route(state: RetrievalState) -> dict:
 
     history = trim_history(state.get("conversation_history") or [], config.HISTORY_MAX_TOKENS)
     try:
-        llm = get_llm().bind_tools([ClassifyAndRewrite])
-        response = llm.invoke(
+        # tool-call 우선, 실패 시 JSON 강제 모드 재시도 (tool_fallback.call_with_schema)
+        args = call_with_schema(
             [
                 SystemMessage(ROUTER_SYSTEM_PROMPT),
                 *history_to_messages(history),
                 HumanMessage(question),
-            ]
+            ],
+            ClassifyAndRewrite,
+            llm_getter=get_llm,
         )
-        tool_calls = getattr(response, "tool_calls", None) or []
-        if not tool_calls:
-            logger.warning("라우터 tool_call 부재 → 원본 질문 + GENERAL 폴백")
+        if args is None:
+            logger.warning("라우터 tool_call/JSON 모두 실패 → 원본 질문 + GENERAL 폴백")
             return fallback
 
-        args = tool_calls[0].get("args") or {}
         rewritten = str(args.get("rewritten_query") or "").strip() or question
         domain = str(args.get("domain") or "").strip().upper()
         if domain not in DOMAINS:

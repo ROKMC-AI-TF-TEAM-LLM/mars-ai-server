@@ -20,7 +20,10 @@ class _FakeLLM:
         self.exc = exc
         self.captured_messages: list | None = None
 
-    def bind_tools(self, tools: list) -> _FakeLLM:
+    def bind_tools(self, tools: list, **kwargs: Any) -> _FakeLLM:
+        return self
+
+    def bind(self, **kwargs: Any) -> _FakeLLM:
         return self
 
     def invoke(self, messages: list) -> Any:
