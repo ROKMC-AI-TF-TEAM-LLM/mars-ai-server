@@ -16,7 +16,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -206,11 +206,15 @@ def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
     return sources
 
 
-async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
+async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIterator[str]:
     """그래프를 완주(invoke)한 뒤 확정 답변을 SSE로 분할 전송한다.
 
     fallback 답변도 정상 text로 보낸다. error 이벤트는 파이프라인
     예외(서비스 다운, 타임아웃 등)에만 사용하고, 스트림은 항상 done 이벤트로 끝난다.
+
+    생성 중지: 별도 API 없이 클라이언트의 SSE 연결 중단으로 처리한다.
+    노드 경계마다 연결을 확인해 끊겼으면 이후 단계를 실행하지 않는다
+    (진행 중이던 단일 LLM 호출까지는 완료됨 — 강제 중단 불가).
     """
     user_department = request.user_department or ""
     try:
@@ -231,6 +235,12 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
             update = await asyncio.to_thread(next, updates_stream, sentinel)
             if update is sentinel:
                 break
+            if await http_request.is_disconnected():
+                logger.info(
+                    "클라이언트 연결 중단 감지 → 파이프라인 중단 (질문=%s)", request.question
+                )
+                updates_stream.close()  # 이후 노드 실행 방지
+                return
             for node_name, delta in update.items():
                 if isinstance(delta, dict):
                     result.update(delta)  # 노드별 변경분을 병합해 최종 상태를 복원
@@ -251,6 +261,11 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
         )
         async for frame in stream_answer(result.get("final_answer") or "", sources):
             yield frame
+    except asyncio.CancelledError:
+        # 클라이언트가 연결을 중단(abort)하면 Starlette가 이 제너레이터를 취소한다.
+        # 진행 중이던 노드까지만 실행되고 이후 단계는 실행되지 않는다
+        logger.info("클라이언트 연결 중단 → 파이프라인 중단 (질문=%s)", request.question)
+        raise
     except Exception:
         logger.exception("파이프라인 예외")
         try:
@@ -306,7 +321,7 @@ _QUERY_RESPONSES = {
 
 
 @app.post("/query", summary="질의응답 (SSE 스트리밍)", responses=_QUERY_RESPONSES)
-async def query(request: QueryRequest) -> StreamingResponse:
+async def query(request: QueryRequest, http_request: Request) -> StreamingResponse:
     """질의응답 파이프라인을 완주한 뒤 확정 답변을 SSE로 분할 전송한다.
 
     처리 흐름: 라우팅(잡담 감지·쿼리 재작성) → 하이브리드 검색(벡터+BM25,
@@ -316,6 +331,9 @@ async def query(request: QueryRequest) -> StreamingResponse:
       (검증 실패 시 재생성되므로, 이미 보낸 텍스트를 취소할 수 없는 SSE 계약과의 정합)
     - `domain`을 지정하면 해당 도메인 문서만 검색한다. 빈 값/"ALL"이면 전 도메인
     - `user_department` 누락 시 visibility=ALL 문서만 검색된다
+    - **생성 중지**: 별도 API 없음. 클라이언트가 SSE 연결을 중단(abort)하면
+      서버가 노드 경계에서 감지해 이후 단계를 실행하지 않는다.
+      미들웨어는 프론트 연결 중단 시 본 서버로의 요청도 함께 중단해야 한다
     """
     logger.info(
         "질의 수신: dept=%s, domain=%s, 이력 %d턴, 질문=%s",
@@ -327,7 +345,7 @@ async def query(request: QueryRequest) -> StreamingResponse:
     # 미들웨어 연동 디버깅용 요청 전문 (LOG_LEVEL=DEBUG일 때만 출력)
     logger.debug("요청 전문: %s", json.dumps(request.model_dump(), ensure_ascii=False))
     return StreamingResponse(
-        _run_pipeline(request),
+        _run_pipeline(request, http_request),
         media_type="text/event-stream",
         headers={
             "X-Accel-Buffering": "no",  # 리버스 프록시 버퍼링 방지 (필수)

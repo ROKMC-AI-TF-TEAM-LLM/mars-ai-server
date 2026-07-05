@@ -255,6 +255,14 @@ data: {"type":"done"}
 - 응답 헤더에 `X-Accel-Buffering: no` 설정 (리버스 프록시 버퍼링 방지)
 - FastAPI에서는 `StreamingResponse(media_type="text/event-stream")` 사용
 
+**생성 중지 (취소)**:
+
+- 별도 취소 API 없음. 클라이언트가 SSE 연결을 중단(fetch abort)하는 것이
+  중지 신호다. 서버는 그래프 노드 경계마다 연결을 확인해 끊겼으면 이후
+  단계를 실행하지 않는다 (진행 중이던 단일 LLM 호출까지는 완료됨)
+- **미들웨어 책임**: 프론트 연결이 중단되면 본 서버로의 요청도 함께
+  중단(abort)해야 한다. 전파하지 않으면 서버는 파이프라인을 끝까지 실행한다
+
 ## 6. Tool 스키마 (vLLM `--tool-call-parser hermes`로 파싱)
 
 ```python
