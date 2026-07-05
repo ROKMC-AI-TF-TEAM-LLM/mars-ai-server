@@ -56,7 +56,8 @@ class RetrievalState(TypedDict):
     conversation_history: Optional[list[dict]]   # [{"role": "user"|"assistant", "content": str}, ...]
     rewritten_query: Optional[str]               # route가 생성한 검색용 쿼리
     user_department: str
-    domain: Optional[str]
+    requested_domain: Optional[str]              # 요청이 명시한 검색 도메인 한정 (빈 값=전체)
+    domain: Optional[str]                        # 라우터 분류 (SMALLTALK 분기·감사 로그용)
     dense_candidates: Optional[list[dict]]       # dense 검색 top_k개
     bm25_candidates: Optional[list[dict]]        # bm25 검색 top_k개
     retrieved_candidates: Optional[list[dict]]   # RRF 융합 후 상위 20
@@ -183,6 +184,7 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 {
   "question": "그거 얼마나 쓸 수 있어?",
   "user_department": "TECH",
+  "domain": "",
   "messages": [
     {"role": "human", "content": "육아휴직에 대해 알려줘"},
     {"role": "ai", "content": "육아휴직은 최대 1년까지..."}
@@ -196,6 +198,11 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 - `user_department`는 ACL의 근거. **누락 시 가장 제한적으로 처리**:
   visibility가 `"ALL"`인 문서만 검색 대상 (DEPT_ONLY 전부 배제).
   미들웨어가 실제로 이 필드를 보내는지 확정 필요 (미확정 항목)
+- `domain`(선택): 검색 범위를 특정 도메인으로 한정. 허용값 `HR`|`TECH`|`FINANCE_LEGAL`.
+  **빈 값·`"ALL"`·`"GENERAL"`·미지의 값이면 도메인 무관 검색** (권한 필터만 적용).
+  검색 필터에 쓰이는 도메인은 이 요청 값이 유일하며, 라우터의 LLM 분류(domain)는
+  SMALLTALK 분기·감사 로그 전용으로 검색 범위를 제한하지 않는다
+  (분류-적재 도메인 불일치로 정답 문서가 배제되는 사고 방지)
 
 **응답** (Content-Type: text/event-stream):
 

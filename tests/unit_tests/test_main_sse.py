@@ -31,6 +31,23 @@ def test_알_수_없는_role은_건너뛴다() -> None:
     assert converted == [{"role": "user", "content": "질문"}]
 
 
+# ---------- normalize_requested_domain ----------
+
+
+def test_도메인_정규화_허용값만_필터로_인정() -> None:
+    assert main.normalize_requested_domain("HR") == "HR"
+    assert main.normalize_requested_domain("finance_legal") == "FINANCE_LEGAL"  # 대소문자 허용
+
+
+def test_도메인_정규화_빈값_ALL_GENERAL_미지값은_전체_검색() -> None:
+    assert main.normalize_requested_domain("") == ""
+    assert main.normalize_requested_domain("ALL") == ""
+    assert main.normalize_requested_domain("all") == ""
+    assert main.normalize_requested_domain("GENERAL") == ""
+    assert main.normalize_requested_domain("MARKETING") == ""  # 미지 값은 무시
+    assert main.normalize_requested_domain("SMALLTALK") == ""  # 검색 도메인이 아님
+
+
 # ---------- sse_event ----------
 
 

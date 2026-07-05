@@ -18,8 +18,7 @@ def test_축소_그래프_E2E_상위_5개_반환() -> None:
         {"question": "육아휴직은 얼마나 쓸 수 있어?", "user_department": "HR_TEAM"}
     )
 
-    assert result["rewritten_query"]  # 더미 라우터가 채운다
-    assert result["domain"] == "GENERAL"
+    assert result["rewritten_query"]  # 라우터가 채운다 (실패 시 원본 폴백)
     chunks = result["retrieved_chunks"]
     assert 1 <= len(chunks) <= 5
     assert all(c["text"] and c["source_doc"] for c in chunks)

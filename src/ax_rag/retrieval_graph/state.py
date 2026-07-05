@@ -14,7 +14,10 @@ class RetrievalState(TypedDict):
     conversation_history: list[dict] | None  # [{"role": "user"|"assistant", "content": str}]
     rewritten_query: str | None  # route가 생성한 검색용 쿼리
     user_department: str
-    domain: str | None  # config.DOMAINS 중 하나
+    # 요청이 명시한 검색 도메인 한정 (main.py에서 정규화). 빈 값이면 전 도메인 검색.
+    # 검색 필터에 쓰이는 유일한 도메인 값 — 라우터 분류(domain)는 검색을 제한하지 않는다
+    requested_domain: str | None
+    domain: str | None  # 라우터 분류 결과 (SMALLTALK 분기·감사 로그용)
     dense_candidates: list[dict] | None  # dense 검색 top_k개
     bm25_candidates: list[dict] | None  # bm25 검색 top_k개 (ACL 후처리 완료분)
     retrieved_candidates: list[dict] | None  # RRF 융합 후 상위 20

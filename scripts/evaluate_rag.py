@@ -71,6 +71,8 @@ def run_pipeline(
         "question": question,
         "rewritten_query": question,
         "user_department": user_department,
+        # 검색 노드는 requested_domain만 본다 (라우터 분류는 검색 범위 미제한)
+        "requested_domain": domain if domain in ("HR", "TECH", "FINANCE_LEGAL") else "",
         "domain": domain,
     }
     dense = dense_retrieve(state)["dense_candidates"]

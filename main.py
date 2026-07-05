@@ -23,14 +23,23 @@ from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
 from ax_rag.shared.audit_log import log_query
-from ax_rag.shared.config import get_config
+from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # uvicorn으로 실행돼도 통일 포맷(시각 | 레벨 | 모듈 | 메시지)이 적용되게 임포트 시점에 설정
 setup_logging()
 logger = get_logger("main")
 
-app = FastAPI(title="A.X RAG 서버")
+app = FastAPI(
+    title="A.X RAG 서버",
+    version="0.1.0",
+    description=(
+        "사내 업무 문서 검색 챗봇 API (미들웨어 연동용).\n\n"
+        "- 응답은 **SSE(text/event-stream) 스트리밍** — 이벤트 계약은 `POST /query` 문서 참조\n"
+        "- 로컬 서비스 4종(vLLM :8000, 임베딩 :8001, 리랭커 :8002, Milvus)이 기동되어 있어야 한다\n"
+        "- 상세 스펙: docs/interfaces.md §5"
+    ),
+)
 
 # 브라우저 프론트가 직접 붙는 개발/데모용 CORS 허용.
 # 운영 경로는 미들웨어의 서버 간 호출이라 CORS가 관여하지 않는다 (내부망 신뢰)
@@ -50,12 +59,53 @@ _SENTENCE_RE = re.compile(r"[^.!?]*[.!?]+\s*|[^.!?]+\s*$")
 
 
 class QueryRequest(BaseModel):
-    """POST /query 요청 (미들웨어 계약)."""
+    """POST /query 요청 본문 (미들웨어 계약, interfaces.md §5)."""
 
-    question: str
-    # 누락 시 가장 제한적으로 처리: visibility ALL 문서만 검색 (interfaces.md §5)
-    user_department: str = ""
-    messages: list[dict] = Field(default_factory=list)
+    question: str = Field(
+        description="사용자 질문 (자연어, 구어체 허용)",
+        examples=["육아휴직은 얼마나 쓸 수 있어?"],
+    )
+    user_department: str = Field(
+        default="",
+        description=(
+            "ACL 판정 근거 부서 코드. 누락 시 가장 제한적으로 처리되어 "
+            "visibility=ALL 문서만 검색된다 (DEPT_ONLY 전부 배제)"
+        ),
+        examples=["HR_TEAM"],
+    )
+    domain: str = Field(
+        default="",
+        description=(
+            "검색 도메인 한정 (선택). 허용값: HR | TECH | FINANCE_LEGAL. "
+            '빈 값 또는 "ALL"이면 도메인 무관 검색. "GENERAL"·미지의 값도 '
+            "도메인 무관으로 처리. 라우터의 LLM 분류는 검색 범위를 제한하지 않는다"
+        ),
+        examples=["FINANCE_LEGAL"],
+    )
+    messages: list[dict] = Field(
+        default_factory=list,
+        description='이전 대화 이력. role은 미들웨어 규약 "human" | "ai"',
+        examples=[
+            [
+                {"role": "human", "content": "육아휴직에 대해 알려줘"},
+                {"role": "ai", "content": "육아휴직은 최대 1년까지 사용할 수 있습니다."},
+            ]
+        ],
+    )
+
+
+def normalize_requested_domain(value: str) -> str:
+    """요청 domain 정규화: DOMAINS의 실제 도메인 값만 한정 필터로 인정한다.
+
+    빈 값 / "ALL" / "GENERAL" / 미지의 값 → ""(도메인 무관 검색).
+    """
+    normalized = (value or "").strip().upper()
+    if not normalized or normalized in ("ALL", "GENERAL"):
+        return ""
+    if normalized in DOMAINS:
+        return normalized
+    logger.warning("미지의 domain 요청값 무시: %r → 도메인 무관 검색", value)
+    return ""
 
 
 def to_internal_history(messages: list[dict]) -> list[dict]:
@@ -146,6 +196,7 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
         state = {
             "question": request.question,
             "user_department": user_department,
+            "requested_domain": normalize_requested_domain(request.domain),
             "conversation_history": to_internal_history(request.messages),
         }
         # 동기 그래프를 스레드로 넘겨 이벤트 루프를 막지 않는다
@@ -178,18 +229,56 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
         yield sse_event({"type": "done"})
 
 
-@app.get("/health")
+@app.get("/health", summary="헬스체크")
 def health() -> dict[str, str]:
-    """헬스체크."""
+    """서버 생존 확인. 파이프라인/모델 상태는 검사하지 않는다."""
     return {"status": "ok"}
 
 
-@app.post("/query")
+_QUERY_RESPONSES = {
+    200: {
+        "description": (
+            "SSE 스트림 (`data: {JSON}\\n\\n` 프레임). 이벤트 순서:\n\n"
+            '1. `{"type": "text", "content": str}` — 답변 조각, N회 '
+            "(문장 단위, STREAM_TEXT_INTERVAL_MS 간격)\n"
+            '2. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
+            "정확히 1회. 근거 검증(verify)을 통과한 답변에만 문서가 담기며, "
+            "fallback·잡담 응답은 빈 배열\n"
+            '3. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
+            '파이프라인 예외 시: `{"type": "error", "message": str}` → done. '
+            "fallback 답변은 error가 아니라 정상 text로 전송된다."
+        ),
+        "content": {
+            "text/event-stream": {
+                "example": (
+                    'data: {"type": "text", "content": '
+                    '"육아휴직은 자녀 1명당 최대 1년까지 사용할 수 있습니다. "}\n\n'
+                    'data: {"type": "sources", "items": '
+                    '[{"name": "휴가규정.md", "page": null}]}\n\n'
+                    'data: {"type": "done"}\n\n'
+                )
+            }
+        },
+    }
+}
+
+
+@app.post("/query", summary="질의응답 (SSE 스트리밍)", responses=_QUERY_RESPONSES)
 async def query(request: QueryRequest) -> StreamingResponse:
-    """질의응답 SSE 엔드포인트 (미들웨어 전용)."""
+    """질의응답 파이프라인을 완주한 뒤 확정 답변을 SSE로 분할 전송한다.
+
+    처리 흐름: 라우팅(잡담 감지·쿼리 재작성) → 하이브리드 검색(벡터+BM25,
+    부서 ACL 강제) → 리랭크 → 답변 생성 → 근거 검증(fail-closed) → 스트리밍.
+
+    - 토큰 실시간 스트리밍이 아니라 **검증 통과 후 분할 전송**이다
+      (검증 실패 시 재생성되므로, 이미 보낸 텍스트를 취소할 수 없는 SSE 계약과의 정합)
+    - `domain`을 지정하면 해당 도메인 문서만 검색한다. 빈 값/"ALL"이면 전 도메인
+    - `user_department` 누락 시 visibility=ALL 문서만 검색된다
+    """
     logger.info(
-        "질의 수신: dept=%s, 이력 %d턴, 질문=%s",
+        "질의 수신: dept=%s, domain=%s, 이력 %d턴, 질문=%s",
         request.user_department or "(없음)",
+        request.domain or "(전체)",
         len(request.messages),
         request.question,
     )
