@@ -31,20 +31,52 @@ langgraph dev      # 그래프 시각화 디버깅 (개발 노트북 전용)
 
 ## 개발 환경 재구축 (초기화되는 PC용, clone부터)
 
+### 전원 끄기 전 (백업)
+
+```powershell
+git push                                        # ★ 필수: push 안 한 커밋은 초기화 시 소멸
+Copy-Item models, tools -Destination D:\backup\ -Recurse   # 선택: 모델 9GB 재다운로드 방지
+```
+
+### 재부팅 후 — 최초 1회 셋업
+
 ```powershell
 # 0) 시스템 요구: Python 3.11.x, git, Docker Desktop (설치 후 실행 상태)
 git clone <저장소 URL> mars-ai-server
 cd mars-ai-server
-powershell -File scripts\dev_setup.ps1     # venv+의존성, .env, 모델(~9GB), llama.cpp, Milvus 컨테이너
+powershell -File scripts\dev_setup.ps1          # venv+의존성, .env, 모델(~9GB), llama.cpp, Milvus 컨테이너
+# 모델 백업을 복원한 경우: models/, tools/ 붙여넣은 뒤
+powershell -File scripts\dev_setup.ps1 -SkipModels
 ```
 
-이후 기동 순서는 스크립트 마지막 출력 참고 (LLM → 임베딩 → 리랭커 → 적재 → main.py).
+### 서버 기동 (순서대로, 각각 별도 터미널)
 
-- 모델 재다운로드(~9GB)를 피하려면 초기화 전에 `models/`와 `tools/` 폴더를
-  외장/비초기화 드라이브에 백업하고, 복원 후 `-SkipModels`로 실행:
-  `powershell -File scripts\dev_setup.ps1 -SkipModels`
-- Milvus 적재 데이터(`data/milvus-docker/`)와 BM25 인덱스는 초기화되면
-  사라지므로 재적재 필요 (4번 단계). 감사 로그도 새로 시작된다.
+```powershell
+docker start ax-milvus-dev                                                        # 벡터DB :19530 (셋업 직후엔 이미 실행 중)
+powershell -File serving\start_llm_dev.ps1                                        # 1) LLM :8000
+$env:PYTHONPATH="src"; .\.venv\Scripts\python.exe serving\embedding_server.py     # 2) 임베딩 :8001
+$env:PYTHONPATH="src"; .\.venv\Scripts\python.exe serving\reranker_server.py      # 3) 리랭커 :8002
+$env:PYTHONPATH="src"; .\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 9000   # 4) API :9000
+```
+
+### 문서 적재 (초기화 시 벡터DB가 비므로 재적재 필수, 2·3번 서버 기동 후)
+
+```powershell
+$env:PYTHONPATH="src"; .\.venv\Scripts\python.exe scripts\bulk_ingest.py --dir sample_docs --domain HR --department HR_TEAM --visibility ALL
+# 문서 갱신 시:
+$env:PYTHONPATH="src"; .\.venv\Scripts\python.exe scripts\reindex_document.py --file <파일> --domain <도메인> --department <부서>
+```
+
+### 동작 확인
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q         # 유닛 테스트
+curl http://localhost:9000/health               # API 헬스체크
+curl -N -X POST http://localhost:9000/query -H "Content-Type: application/json" --data-binary "@질문.json"   # SSE 확인
+```
+
+- 초기화로 사라지는 것: venv, .env, 모델/도구(백업 가능), Milvus 적재 데이터,
+  BM25 인덱스, 감사 로그. 코드·docs는 push했다면 clone으로 복구된다.
 
 ## 개발 노트북에서 LLM 띄우기 (선택)
 
