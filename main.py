@@ -187,6 +187,14 @@ def health() -> dict[str, str]:
 @app.post("/query")
 async def query(request: QueryRequest) -> StreamingResponse:
     """질의응답 SSE 엔드포인트 (미들웨어 전용)."""
+    logger.info(
+        "질의 수신: dept=%s, 이력 %d턴, 질문=%s",
+        request.user_department or "(없음)",
+        len(request.messages),
+        request.question,
+    )
+    # 미들웨어 연동 디버깅용 요청 전문 (LOG_LEVEL=DEBUG일 때만 출력)
+    logger.debug("요청 전문: %s", json.dumps(request.model_dump(), ensure_ascii=False))
     return StreamingResponse(
         _run_pipeline(request),
         media_type="text/event-stream",
