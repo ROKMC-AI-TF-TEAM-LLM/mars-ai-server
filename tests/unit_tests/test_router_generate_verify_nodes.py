@@ -71,6 +71,31 @@ def test_route_미지의_도메인은_GENERAL로_강등된다(monkeypatch: pytes
     assert result["domain"] == "GENERAL"
 
 
+def test_route_이력은_대화가_아니라_데이터_블록으로_전달된다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """이력을 user/assistant 메시지로 넣으면 작은 모델이 대화 이어가기로
+    끌려가 tool-call을 놓친다 (실측). 시스템 + 단일 유저 메시지여야 한다."""
+    fake = _FakeLLM(
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "domain": "GENERAL"})
+    )
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    router_module.route(
+        {
+            "question": "그거 얼마나 쓸 수 있어?",
+            "conversation_history": [
+                {"role": "user", "content": "육아휴직에 대해 알려줘"},
+                {"role": "assistant", "content": "죄송합니다. 근거를 찾지 못했습니다."},
+            ],
+        }
+    )
+    assert len(fake.captured_messages) == 2  # System + Human 단 둘
+    user_text = fake.captured_messages[1].content
+    assert "육아휴직에 대해 알려줘" in user_text  # 이력이 텍스트로 포함
+    assert "분류할 마지막 질문: 그거 얼마나 쓸 수 있어?" in user_text
+    assert "이어서 답하지 말 것" in user_text  # 대화 계속 방지 지시
+
+
 def test_route_SMALLTALK_분류를_허용한다(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(
         _tool_response("ClassifyAndRewrite", {"rewritten_query": "인사", "domain": "SMALLTALK"})

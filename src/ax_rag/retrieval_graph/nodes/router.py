@@ -2,6 +2,11 @@
 멀티턴 맥락 해소 + 구어체 정규화 + 도메인 분류 (architecture.md §4).
 
 tool_call이 없거나 실패하면 원본 질문 + GENERAL로 폴백한다.
+
+주의: 이력을 user/assistant 대화 메시지로 넣으면 작은 모델이 "분류"가 아니라
+"대화 이어가기"로 끌려가 tool-call을 놓친다 (특히 직전 답변이 fallback
+사과문일 때 — 개발 노트북에서 실측). 그래서 이력은 분류 대상 데이터
+블록(텍스트)으로 감싸 단일 메시지로 전달한다.
 """
 
 from __future__ import annotations
@@ -10,7 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from ax_rag.retrieval_graph.budget import trim_history
-from ax_rag.retrieval_graph.prompts import ROUTER_SYSTEM_PROMPT, history_to_messages
+from ax_rag.retrieval_graph.prompts import ROUTER_SYSTEM_PROMPT
 from ax_rag.retrieval_graph.state import RetrievalState
 from ax_rag.retrieval_graph.tool_fallback import call_with_schema
 from ax_rag.shared.config import DOMAINS, SMALLTALK_DOMAIN, get_config
@@ -25,6 +30,21 @@ class ClassifyAndRewrite(BaseModel):
 
     rewritten_query: str  # 검색에 최적화된 쿼리
     domain: str  # "HR" | "TECH" | "FINANCE_LEGAL" | "GENERAL" | "SMALLTALK"
+
+
+def _build_router_input(question: str, history: list[dict]) -> str:
+    """이력을 대화가 아닌 '참고 데이터'로 감싼 분류 요청 텍스트를 만든다."""
+    if not history:
+        return f"분류할 질문: {question}"
+    lines = [
+        f"- {'사용자' if message.get('role') == 'user' else '챗봇'}: {message.get('content', '')}"
+        for message in history
+    ]
+    return (
+        "이전 대화 이력 (맥락 해소용 참고 데이터일 뿐, 이어서 답하지 말 것):\n"
+        + "\n".join(lines)
+        + f"\n\n분류할 마지막 질문: {question}"
+    )
 
 
 def route(state: RetrievalState) -> dict:
@@ -43,8 +63,7 @@ def route(state: RetrievalState) -> dict:
         args = call_with_schema(
             [
                 SystemMessage(ROUTER_SYSTEM_PROMPT),
-                *history_to_messages(history),
-                HumanMessage(question),
+                HumanMessage(_build_router_input(question, history)),
             ],
             ClassifyAndRewrite,
             llm_getter=get_llm,
