@@ -29,6 +29,23 @@ make format        # ruff format
 langgraph dev      # 그래프 시각화 디버깅 (개발 노트북 전용)
 ```
 
+## 개발 환경 재구축 (초기화되는 PC용, clone부터)
+
+```powershell
+# 0) 시스템 요구: Python 3.11.x, git, Docker Desktop (설치 후 실행 상태)
+git clone <저장소 URL> mars-ai-server
+cd mars-ai-server
+powershell -File scripts\dev_setup.ps1     # venv+의존성, .env, 모델(~9GB), llama.cpp, Milvus 컨테이너
+```
+
+이후 기동 순서는 스크립트 마지막 출력 참고 (LLM → 임베딩 → 리랭커 → 적재 → main.py).
+
+- 모델 재다운로드(~9GB)를 피하려면 초기화 전에 `models/`와 `tools/` 폴더를
+  외장/비초기화 드라이브에 백업하고, 복원 후 `-SkipModels`로 실행:
+  `powershell -File scripts\dev_setup.ps1 -SkipModels`
+- Milvus 적재 데이터(`data/milvus-docker/`)와 BM25 인덱스는 초기화되면
+  사라지므로 재적재 필요 (4번 단계). 감사 로그도 새로 시작된다.
+
 ## 개발 노트북에서 LLM 띄우기 (선택)
 
 Windows에서는 vLLM 실행이 불가하므로, 프롬프트/로직 검증용으로 llama.cpp를 쓴다:
