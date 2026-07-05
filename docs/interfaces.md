@@ -339,6 +339,9 @@ FlagEmbedding==1.3.3
 kiwipiepy==0.22.2
 bm25s==0.2.5
 
+# ── 문서 파서 (PDF) ──
+pdfplumber==0.11.10
+
 # ── API 서버 ──
 fastapi==0.115.6
 uvicorn[standard]==0.34.0

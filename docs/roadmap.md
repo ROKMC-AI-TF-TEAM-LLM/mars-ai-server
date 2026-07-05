@@ -123,6 +123,8 @@
 ## 미확정 항목 (구현 중 만나면 사용자에게 확인)
 
 - HWP 파서 선택 — 결정 전까지 PDF/DOCX만 지원, HWP는 섹션 없이 통짜 처리
+  (PDF는 pdfplumber==0.11.10으로 지원 완료 — 통짜 처리, 스캔본 미지원.
+   DOCX는 필요 시 python-docx 추가 예정)
 - user_department를 미들웨어가 실제로 보내는지 (현재 요청 예시에 없음.
   누락 시 visibility ALL만 검색하는 제한적 폴백으로 구현)
 - sources의 `page` 필드 — 청크 메타데이터에 페이지 정보가 없음.

@@ -18,8 +18,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from ax_rag.indexer_graph.chunking import parse_markdown_sections
 from ax_rag.indexer_graph.graph import graph
+from ax_rag.indexer_graph.loaders import load_document
 from ax_rag.shared import parent_store, vectorstore
 from ax_rag.shared.config import DOMAINS
 from ax_rag.shared.logging_setup import setup_logging
@@ -46,8 +46,10 @@ def main() -> int:
     deleted_parents = parent_store.delete_by_source_doc(source_doc)
     print(f"{source_doc}: 기존 자식 {deleted_children}건, 부모 {deleted_parents}건 삭제")
 
-    text = path.read_text(encoding="utf-8")
-    sections = parse_markdown_sections(text) if path.suffix == ".md" else None
+    text, sections = load_document(path)
+    if not text.strip():
+        print(f"{source_doc}: 텍스트를 추출하지 못했다 (스캔본 PDF?)", file=sys.stderr)
+        return 1
     result = graph.invoke(
         {
             "text": text,

@@ -6,7 +6,8 @@
 
 - .md는 `## ` 헤딩 기준으로 섹션을 분해해 전달한다 (구조 인식 청킹)
 - .txt는 통짜 텍스트로 전달한다
-- HWP/PDF/DOCX 파서는 미확정 항목 (roadmap.md) — 현재는 텍스트 파일만
+- .pdf는 pdfplumber로 텍스트를 추출해 통짜 처리한다 (스캔본 미지원)
+- HWP/DOCX 파서는 미확정 항목 (roadmap.md) — 아직 미지원
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from ax_rag.indexer_graph.chunking import parse_markdown_sections
 from ax_rag.indexer_graph.graph import graph
+from ax_rag.indexer_graph.loaders import SUPPORTED_SUFFIXES, load_document
 from ax_rag.shared.config import DOMAINS
 from ax_rag.shared.logging_setup import setup_logging
 
@@ -37,15 +38,17 @@ def main() -> int:
         print(f"디렉터리가 없다: {doc_dir}", file=sys.stderr)
         return 1
 
-    files = sorted([*doc_dir.glob("*.md"), *doc_dir.glob("*.txt")])
+    files = sorted(p for p in doc_dir.iterdir() if p.suffix.lower() in SUPPORTED_SUFFIXES)
     if not files:
-        print(f"적재할 .md/.txt 파일이 없다: {doc_dir}", file=sys.stderr)
+        print(f"적재할 파일({SUPPORTED_SUFFIXES})이 없다: {doc_dir}", file=sys.stderr)
         return 1
 
     total = 0
     for path in files:
-        text = path.read_text(encoding="utf-8")
-        sections = parse_markdown_sections(text) if path.suffix == ".md" else None
+        text, sections = load_document(path)
+        if not text.strip():
+            print(f"{path.name}: 텍스트 없음 (스캔본 PDF?) → 건너뜀", file=sys.stderr)
+            continue
         result = graph.invoke(
             {
                 "text": text,
