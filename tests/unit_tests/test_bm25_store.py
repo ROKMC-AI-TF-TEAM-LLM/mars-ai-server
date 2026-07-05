@@ -68,7 +68,8 @@ def test_top_k가_코퍼스보다_커도_안전하다(bm25_index_dir: Path) -> N
 def test_외부_프로세스가_인덱스를_갱신하면_자동_재로드된다(bm25_index_dir: Path) -> None:
     """보안 회귀 테스트: reindex 스크립트(별도 프로세스)가 ACL 메타데이터를
     갱신했는데 서버가 낡은 캐시로 검색하면 DEPT_ONLY가 노출될 수 있다.
-    corpus mtime이 바뀌면 캐시를 자동 재로드해야 한다."""
+    빌드 버전(uuid)이 바뀌면 캐시를 자동 재로드해야 한다
+    (mtime 비교는 연속 재빌드 시 타임스탬프 충돌로 플레이크가 났었다)."""
     bm25_store.build_bm25_index(_TEXTS, _METAS)
     bm25_store.bm25_search("육아휴직", top_k=3)  # 캐시 적재
     stale = bm25_store._cached

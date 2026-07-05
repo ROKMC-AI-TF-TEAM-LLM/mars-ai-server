@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,6 +28,7 @@ _CONTENT_TAG_PREFIXES = ("NN", "NP", "NR", "VV", "VA", "XR", "SL", "SN", "SH")
 # 인덱스 디렉터리 내 파일 배치
 _INDEX_SUBDIR = "index"  # bm25s retriever.save 산출물
 _CORPUS_FILE = "corpus.jsonl"  # 원문 + 메타데이터 (행 순서 = bm25s 문서 인덱스)
+_VERSION_FILE = "version"  # 빌드마다 새로 쓰는 uuid (캐시 갱신 감지용)
 
 
 @lru_cache(maxsize=1)
@@ -71,6 +73,10 @@ def build_bm25_index(texts: list[str], metadatas: list[dict]) -> None:
         for text, metadata in zip(texts, metadatas, strict=True):
             f.write(json.dumps({"text": text, "meta": metadata}, ensure_ascii=False) + "\n")
 
+    # 빌드 식별자: mtime은 연속 재빌드 시 같은 값이 나올 수 있어(파일시스템
+    # 타임스탬프 정밀도) 갱신 감지가 새는 경우가 있다. uuid로 확정적으로 감지한다
+    (index_dir / _VERSION_FILE).write_text(uuid.uuid4().hex, encoding="utf-8")
+
     _clear_cache()
     logger.info("BM25 인덱스 재빌드 완료: 문서 %d건, 경로 %s", len(texts), index_dir)
 
@@ -83,10 +89,10 @@ def load_bm25_index() -> bm25s.BM25 | None:
     return bm25s.BM25.load(str(index_dir))
 
 
-# (corpus mtime, retriever, corpus) — mtime이 바뀌면 자동 재로드한다.
+# (빌드 버전, retriever, corpus) — 버전이 바뀌면 자동 재로드한다.
 # 주의: lru_cache처럼 영구 캐시하면 별도 프로세스(reindex 스크립트)가 갱신한
 # ACL 메타데이터를 서버가 계속 낡은 값으로 들고 있어 DEPT_ONLY가 노출될 수 있다
-_cached: tuple[float, bm25s.BM25, list[dict]] | None = None
+_cached: tuple[str, bm25s.BM25, list[dict]] | None = None
 
 
 def _clear_cache() -> None:
@@ -95,19 +101,28 @@ def _clear_cache() -> None:
     _cached = None
 
 
+def _current_version(index_dir: Path) -> str:
+    """현재 인덱스의 빌드 식별자. 구버전 인덱스(version 파일 없음)는 mtime으로 폴백."""
+    version_path = index_dir / _VERSION_FILE
+    if version_path.is_file():
+        return version_path.read_text(encoding="utf-8").strip()
+    return str((index_dir / _CORPUS_FILE).stat().st_mtime)
+
+
 def _load_cached() -> tuple[bm25s.BM25, list[dict]] | None:
-    """(retriever, corpus 항목 목록) 로드. corpus 파일 mtime 변경 시 재로드.
+    """(retriever, corpus 항목 목록) 로드. 빌드 버전 변경 시 재로드.
 
     인덱스가 없으면 None (dense 단독 폴백).
     """
     global _cached
-    corpus_path = Path(get_config().BM25_INDEX_PATH) / _CORPUS_FILE
+    index_dir = Path(get_config().BM25_INDEX_PATH)
+    corpus_path = index_dir / _CORPUS_FILE
     if not corpus_path.is_file():
         logger.warning("BM25 인덱스가 없다. dense 단독 폴백으로 동작한다")
         return None
 
-    mtime = corpus_path.stat().st_mtime
-    if _cached is not None and _cached[0] == mtime:
+    version = _current_version(index_dir)
+    if _cached is not None and _cached[0] == version:
         return _cached[1], _cached[2]
 
     retriever = load_bm25_index()
@@ -115,8 +130,8 @@ def _load_cached() -> tuple[bm25s.BM25, list[dict]] | None:
         return None
     with open(corpus_path, encoding="utf-8") as f:
         corpus = [json.loads(line) for line in f if line.strip()]
-    _cached = (mtime, retriever, corpus)
-    logger.info("BM25 인덱스 로드: 문서 %d건 (mtime=%s)", len(corpus), mtime)
+    _cached = (version, retriever, corpus)
+    logger.info("BM25 인덱스 로드: 문서 %d건 (version=%s)", len(corpus), version)
     return retriever, corpus
 
 
