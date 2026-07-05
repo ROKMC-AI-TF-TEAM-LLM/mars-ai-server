@@ -206,9 +206,13 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 
 **응답** (Content-Type: text/event-stream):
 
-이벤트는 `data: {JSON}\n\n` 형식. 타입 3종 + 종료 신호:
+이벤트는 `data: {JSON}\n\n` 형식. 타입 4종 + 종료 신호:
 
 ```
+data: {"type":"status","stage":"retrieve","message":"사내 문서를 검색하는 중..."}
+
+data: {"type":"status","stage":"generate","message":"답변을 생성하는 중..."}
+
 data: {"type":"text","content":"육아휴직은"}
 
 data: {"type":"text","content":" 최대 1년까지 사용할 수 있습니다."}
@@ -217,6 +221,12 @@ data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
 
 data: {"type":"done"}
 ```
+
+- `status`(0회 이상): 파이프라인 진행 상태 안내. text 이벤트 시작 전에만 온다.
+  stage 값: `route`(질문 분석) | `retrieve`(검색) | `rerank`(문서 선별) |
+  `generate`(답변 생성) | `verify`(근거 검증). 프론트는 message를 로딩
+  인디케이터로 표시하고 첫 text 수신 시 제거한다.
+  클라이언트는 미지의 type을 무시하도록 구현한다 (향후 확장 대비)
 
 오류 시:
 

@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
 from ax_rag.shared.audit_log import log_query
-from ax_rag.shared.config import DOMAINS, get_config
+from ax_rag.shared.config import DOMAINS, SMALLTALK_DOMAIN, get_config
 from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # uvicorn으로 실행돼도 통일 포맷(시각 | 레벨 | 모듈 | 메시지)이 적용되게 임포트 시점에 설정
@@ -165,6 +165,27 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
     yield sse_event({"type": "done"})
 
 
+def _status_after_node(node_name: str, merged_state: dict) -> tuple[str, str] | None:
+    """그래프 노드 완료 시 다음 단계 안내 (stage, message). 안내가 없는 노드는 None.
+
+    프론트가 "검색하는 중..." 같은 진행 상태를 표시할 수 있게 하는
+    status 이벤트의 재료다. 완료된 노드를 보고 "이제 시작되는 단계"를 알린다.
+    """
+    if node_name == "route":
+        if merged_state.get("domain") == SMALLTALK_DOMAIN:
+            return ("generate", "답변을 생성하는 중...")
+        return ("retrieve", "사내 문서를 검색하는 중...")
+    if node_name == "fuse":
+        return ("rerank", "관련 문서를 선별하는 중...")
+    if node_name == "rerank":
+        return ("generate", "답변을 생성하는 중...")
+    if node_name == "generate":
+        return ("verify", "답변이 문서에 근거하는지 검증하는 중...")
+    if node_name == "increment_retry":
+        return ("generate", "답변을 다시 생성하는 중...")
+    return None
+
+
 def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
     """근거 청크에서 중복 없는 sources 목록을 만든다.
 
@@ -199,8 +220,25 @@ async def _run_pipeline(request: QueryRequest) -> AsyncIterator[str]:
             "requested_domain": normalize_requested_domain(request.domain),
             "conversation_history": to_internal_history(request.messages),
         }
-        # 동기 그래프를 스레드로 넘겨 이벤트 루프를 막지 않는다
-        result = await asyncio.to_thread(graph.invoke, state)
+
+        # 그래프를 노드 단위로 진행시키며(stream) 단계마다 status 이벤트를 흘린다.
+        # 동기 제너레이터의 next()만 스레드로 넘겨 이벤트 루프를 막지 않는다
+        yield sse_event({"type": "status", "stage": "route", "message": "질문을 분석하는 중..."})
+        updates_stream = graph.stream(state, stream_mode="updates")
+        sentinel = object()
+        result: dict = dict(state)
+        while True:
+            update = await asyncio.to_thread(next, updates_stream, sentinel)
+            if update is sentinel:
+                break
+            for node_name, delta in update.items():
+                if isinstance(delta, dict):
+                    result.update(delta)  # 노드별 변경분을 병합해 최종 상태를 복원
+                status = _status_after_node(node_name, result)
+                if status is not None:
+                    stage, message = status
+                    logger.debug("SSE status: %s (%s 완료 후)", message, node_name)
+                    yield sse_event({"type": "status", "stage": stage, "message": message})
 
         grounded = bool(result.get("grounded"))
         sources = _build_sources(result.get("retrieved_chunks") or [], grounded)
@@ -239,14 +277,18 @@ _QUERY_RESPONSES = {
     200: {
         "description": (
             "SSE 스트림 (`data: {JSON}\\n\\n` 프레임). 이벤트 순서:\n\n"
-            '1. `{"type": "text", "content": str}` — 답변 조각, N회 '
+            '1. `{"type": "status", "stage": str, "message": str}` — 진행 상태 안내, '
+            '0회 이상 (예: "사내 문서를 검색하는 중..."). stage 값: '
+            "route | retrieve | rerank | generate | verify\n"
+            '2. `{"type": "text", "content": str}` — 답변 조각, N회 '
             "(문장 단위, STREAM_TEXT_INTERVAL_MS 간격)\n"
-            '2. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
+            '3. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
             "정확히 1회. 근거 검증(verify)을 통과한 답변에만 문서가 담기며, "
             "fallback·잡담 응답은 빈 배열\n"
-            '3. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
+            '4. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
             '파이프라인 예외 시: `{"type": "error", "message": str}` → done. '
-            "fallback 답변은 error가 아니라 정상 text로 전송된다."
+            "fallback 답변은 error가 아니라 정상 text로 전송된다. "
+            "클라이언트는 미지의 type을 무시하도록 구현할 것 (향후 확장 대비)."
         ),
         "content": {
             "text/event-stream": {

@@ -114,6 +114,29 @@ def test_이벤트_순서는_text_sources_done이다() -> None:
     assert payloads[-1]["items"] == [{"name": "휴가규정.pdf", "page": None}]
 
 
+# ---------- _status_after_node ----------
+
+
+def test_노드_완료에_따른_status_안내() -> None:
+    assert main._status_after_node("route", {"domain": "HR"}) == (
+        "retrieve",
+        "사내 문서를 검색하는 중...",
+    )
+    assert main._status_after_node("route", {"domain": "SMALLTALK"}) == (
+        "generate",
+        "답변을 생성하는 중...",
+    )
+    assert main._status_after_node("fuse", {})[0] == "rerank"
+    assert main._status_after_node("rerank", {})[0] == "generate"
+    assert main._status_after_node("generate", {})[0] == "verify"
+    assert main._status_after_node("increment_retry", {})[1] == "답변을 다시 생성하는 중..."
+
+
+def test_안내가_없는_노드는_status를_만들지_않는다() -> None:
+    for node in ("dense_retrieve", "bm25_retrieve", "verify", "finalize", "fallback", "smalltalk"):
+        assert main._status_after_node(node, {}) is None
+
+
 # ---------- _build_sources ----------
 
 
