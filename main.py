@@ -299,7 +299,6 @@ class DocumentItem(BaseModel):
     domain: str = Field(description="적재 시 지정된 도메인")
     visibility: str = Field(description='"ALL" | "DEPT_ONLY"')
     owning_department: str = Field(description="소유 부서 (ACL)")
-    chunk_count: int = Field(description="이 문서에서 생성된 자식 청크 수")
     applied_at: datetime = Field(description="적재(갱신) 시각 — 청크 중 최신 created_at")
 
 
@@ -360,7 +359,6 @@ def list_documents(
                 domain=doc["domain"],
                 visibility=doc["visibility"],
                 owning_department=doc["owning_department"],
-                chunk_count=doc["chunk_count"],
                 applied_at=datetime.fromtimestamp(doc["applied_at"]),
             )
             for doc in page

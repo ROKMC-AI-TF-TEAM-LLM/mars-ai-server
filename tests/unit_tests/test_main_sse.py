@@ -138,6 +138,7 @@ def test_문서_목록_무한_스크롤_페이지네이션(monkeypatch) -> None:
     assert first.has_more is True
     assert first.documents[0].name == "문서_000.pdf"
     assert first.documents[0].type == "PDF"
+    assert not hasattr(first.documents[0], "chunk_count")  # 응답에서 제외 (내부 집계용)
 
     second = main.list_documents(offset=10, limit=10)
     assert second.documents[0].name == "문서_010.pdf"  # 이어지는 페이지
