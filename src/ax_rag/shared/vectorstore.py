@@ -113,6 +113,28 @@ def fetch_all_children(output_fields: list[str]) -> list[dict]:
     )
 
 
+def list_documents() -> list[dict]:
+    """적재 문서 인벤토리: source_doc별 도메인/공개범위/부서/청크 수 집계.
+
+    관리·디버깅용 (GET /documents). 청크 수 내림차순 정렬.
+    """
+    rows = fetch_all_children(["source_doc", "domain", "visibility", "owning_department"])
+    documents: dict[str, dict] = {}
+    for row in rows:
+        entry = documents.setdefault(
+            row["source_doc"],
+            {
+                "source_doc": row["source_doc"],
+                "domain": row["domain"],
+                "visibility": row["visibility"],
+                "owning_department": row["owning_department"],
+                "chunk_count": 0,
+            },
+        )
+        entry["chunk_count"] += 1
+    return sorted(documents.values(), key=lambda d: -d["chunk_count"])
+
+
 def delete_by_source_doc(source_doc: str) -> int:
     """특정 문서의 자식 청크를 전부 삭제한다 (문서 갱신용). 삭제 건수 반환."""
     client = get_client()

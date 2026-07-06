@@ -114,6 +114,40 @@ def test_이벤트_순서는_text_sources_done이다() -> None:
     assert payloads[-1]["items"] == [{"name": "휴가규정.pdf", "page": None}]
 
 
+# ---------- GET /documents ----------
+
+
+def test_문서_목록은_도메인별로_그룹핑된다(monkeypatch) -> None:
+    fake_docs = [
+        {
+            "source_doc": "법률.pdf",
+            "domain": "HR",
+            "visibility": "ALL",
+            "owning_department": "HR_TEAM",
+            "chunk_count": 57,
+        },
+        {
+            "source_doc": "경비규정.txt",
+            "domain": "FINANCE_LEGAL",
+            "visibility": "DEPT_ONLY",
+            "owning_department": "FIN_TEAM",
+            "chunk_count": 2,
+        },
+    ]
+    monkeypatch.setattr(main.vectorstore, "list_documents", lambda: list(fake_docs))
+
+    result = main.list_documents()
+    assert set(result["domains"]) == {"HR", "FINANCE_LEGAL"}
+    assert result["total_documents"] == 2
+    assert result["total_chunks"] == 59
+    assert result["domains"]["HR"][0]["source_doc"] == "법률.pdf"
+    assert "domain" not in result["domains"]["HR"][0]  # 그룹 키와 중복 제거
+
+    filtered = main.list_documents(domain="hr")  # 대소문자 무관
+    assert set(filtered["domains"]) == {"HR"}
+    assert filtered["total_documents"] == 1
+
+
 # ---------- _status_after_node ----------
 
 

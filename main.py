@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
+from ax_rag.shared import vectorstore
 from ax_rag.shared.audit_log import log_query
 from ax_rag.shared.config import DOMAINS, SMALLTALK_DOMAIN, get_config
 from ax_rag.shared.logging_setup import get_logger, setup_logging
@@ -286,6 +287,33 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
 def health() -> dict[str, str]:
     """서버 생존 확인. 파이프라인/모델 상태는 검사하지 않는다."""
     return {"status": "ok"}
+
+
+@app.get("/documents", summary="적재 문서 목록 (도메인별 집계)")
+def list_documents(domain: str | None = None) -> dict:
+    """적재된 문서 인벤토리를 도메인별로 그룹핑해 반환한다 (관리·운영용).
+
+    - `domain` 쿼리 파라미터로 특정 도메인만 필터 가능 (예: `?domain=HR`)
+    - 응답: `domains` (도메인 → 문서 목록), `total_documents`, `total_chunks`.
+      문서 항목: source_doc / visibility / owning_department / chunk_count
+    - ⚠ DEPT_ONLY 문서의 존재(문서명)도 노출되므로 관리 용도로만 쓸 것.
+      일반 사용자 화면에 그대로 내보내지 말 것
+    """
+    documents = vectorstore.list_documents()
+    if domain:
+        wanted = domain.strip().upper()
+        documents = [d for d in documents if d["domain"] == wanted]
+
+    grouped: dict[str, list[dict]] = {}
+    for doc in documents:
+        item = {key: value for key, value in doc.items() if key != "domain"}
+        grouped.setdefault(doc["domain"], []).append(item)
+
+    return {
+        "domains": grouped,
+        "total_documents": len(documents),
+        "total_chunks": sum(d["chunk_count"] for d in documents),
+    }
 
 
 _QUERY_RESPONSES = {
