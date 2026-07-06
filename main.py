@@ -294,12 +294,28 @@ def health() -> dict[str, str]:
 class DocumentItem(BaseModel):
     """적재 문서 1건의 요약 정보."""
 
-    name: str = Field(description="문서 파일명 (source_doc)")
-    type: str = Field(description='파일 형식 (확장자 대문자, 예: "PDF", "MD")')
-    domain: str = Field(description="적재 시 지정된 도메인")
-    visibility: str = Field(description='"ALL" | "DEPT_ONLY"')
-    owning_department: str = Field(description="소유 부서 (ACL)")
-    applied_at: datetime = Field(description="적재(갱신) 시각 — 청크 중 최신 created_at")
+    name: str = Field(description="문서 파일명 (source_doc)", examples=["휴가규정.pdf"])
+    type: str = Field(description="파일 형식 (확장자 대문자)", examples=["PDF"])
+    domain: str = Field(
+        description="적재 시 지정된 도메인 (HR | TECH | FINANCE_LEGAL | GENERAL)",
+        examples=["HR"],
+    )
+    visibility: str = Field(
+        description='공개 범위. "ALL"=전사, "DEPT_ONLY"=소유 부서만 검색 가능',
+        examples=["ALL"],
+    )
+    owning_department: str = Field(
+        description=(
+            "문서 소유 부서 코드 (적재 시 --department 값). "
+            "visibility=DEPT_ONLY일 때 질의자의 user_department와 일치해야 검색된다. "
+            "ALL 문서에서는 소유자 기록용 메타데이터"
+        ),
+        examples=["HR_TEAM"],
+    )
+    applied_at: datetime = Field(
+        description="적재(갱신) 시각 — 청크 중 최신 created_at",
+        examples=["2026-07-05T19:09:47"],
+    )
 
 
 class DocumentListOutput(BaseModel):
