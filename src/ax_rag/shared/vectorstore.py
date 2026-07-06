@@ -16,13 +16,18 @@ from urllib.parse import urlparse
 from pymilvus import DataType, MilvusClient
 
 from ax_rag.shared.config import get_config
+from ax_rag.shared.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 # BGE-M3 dense 차원 (interfaces.md §2)
 EMBED_DIM = 1024
 
-# Milvus query 1회 상한. 사내 문서 규모(수만 청크 미만) 전제이며,
-# 초과가 확인되면 query_iterator 도입으로 전환한다
+# Milvus query 1회 상한 (iterator 미지원 환경의 폴백 경로에서만 사용)
 _QUERY_LIMIT = 16384
+
+# 전체 순회 시 배치 크기
+_ITERATOR_BATCH = 2000
 
 
 @lru_cache(maxsize=1)
@@ -103,22 +108,47 @@ def flush() -> None:
 
 
 def fetch_all_children(output_fields: list[str]) -> list[dict]:
-    """모든 자식 청크를 조회한다 (BM25 전체 재빌드용)."""
+    """모든 자식 청크를 조회한다 (BM25 전체 재빌드, 문서 인벤토리용).
+
+    query 1회 상한(16,384행)을 넘는 대규모 코퍼스를 위해 query_iterator로
+    전체를 순회한다. iterator 미지원 환경(구버전/Lite 제약)에서는 단일
+    query로 폴백한다 — 이 경우 16,384행까지만 조회됨을 경고한다.
+    """
     client = get_client()
-    return client.query(
-        get_collection(),
-        filter='chunk_id != ""',
-        output_fields=output_fields,
-        limit=_QUERY_LIMIT,
-    )
+    name = get_collection()
+    try:
+        iterator = client.query_iterator(
+            collection_name=name,
+            filter='chunk_id != ""',
+            output_fields=output_fields,
+            batch_size=_ITERATOR_BATCH,
+        )
+    except Exception:
+        logger.warning(
+            "query_iterator 미지원 → 단일 query 폴백 (최대 %d행까지만 조회됨)", _QUERY_LIMIT
+        )
+        return client.query(
+            name, filter='chunk_id != ""', output_fields=output_fields, limit=_QUERY_LIMIT
+        )
+
+    rows: list[dict] = []
+    while True:
+        batch = iterator.next()
+        if not batch:
+            iterator.close()
+            return rows
+        rows.extend(batch)
 
 
 def list_documents() -> list[dict]:
-    """적재 문서 인벤토리: source_doc별 도메인/공개범위/부서/청크 수 집계.
+    """적재 문서 인벤토리: source_doc별 도메인/공개범위/부서/청크 수/적재시각 집계.
 
-    관리·디버깅용 (GET /documents). 청크 수 내림차순 정렬.
+    관리·디버깅용 (GET /documents). 무한 스크롤 페이지네이션이 안정적이도록
+    문서명 오름차순 정렬로 반환한다.
     """
-    rows = fetch_all_children(["source_doc", "domain", "visibility", "owning_department"])
+    rows = fetch_all_children(
+        ["source_doc", "domain", "visibility", "owning_department", "created_at"]
+    )
     documents: dict[str, dict] = {}
     for row in rows:
         entry = documents.setdefault(
@@ -129,10 +159,12 @@ def list_documents() -> list[dict]:
                 "visibility": row["visibility"],
                 "owning_department": row["owning_department"],
                 "chunk_count": 0,
+                "applied_at": 0,  # unix timestamp, 청크 중 최신 적재 시각
             },
         )
         entry["chunk_count"] += 1
-    return sorted(documents.values(), key=lambda d: -d["chunk_count"])
+        entry["applied_at"] = max(entry["applied_at"], int(row.get("created_at") or 0))
+    return sorted(documents.values(), key=lambda d: d["source_doc"])
 
 
 def delete_by_source_doc(source_doc: str) -> int:

@@ -117,35 +117,53 @@ def test_이벤트_순서는_text_sources_done이다() -> None:
 # ---------- GET /documents ----------
 
 
-def test_문서_목록은_도메인별로_그룹핑된다(monkeypatch) -> None:
-    fake_docs = [
-        {
-            "source_doc": "법률.pdf",
-            "domain": "HR",
-            "visibility": "ALL",
-            "owning_department": "HR_TEAM",
-            "chunk_count": 57,
-        },
-        {
-            "source_doc": "경비규정.txt",
-            "domain": "FINANCE_LEGAL",
-            "visibility": "DEPT_ONLY",
-            "owning_department": "FIN_TEAM",
-            "chunk_count": 2,
-        },
-    ]
+def _fake_doc(index: int, domain: str = "HR") -> dict:
+    return {
+        "source_doc": f"문서_{index:03d}.pdf",
+        "domain": domain,
+        "visibility": "ALL",
+        "owning_department": "HR_TEAM",
+        "chunk_count": 10,
+        "applied_at": 1_783_200_000,
+    }
+
+
+def test_문서_목록_무한_스크롤_페이지네이션(monkeypatch) -> None:
+    fake_docs = [_fake_doc(i) for i in range(25)]  # 이름 오름차순으로 이미 정렬됨
     monkeypatch.setattr(main.vectorstore, "list_documents", lambda: list(fake_docs))
 
-    result = main.list_documents()
-    assert set(result["domains"]) == {"HR", "FINANCE_LEGAL"}
-    assert result["total_documents"] == 2
-    assert result["total_chunks"] == 59
-    assert result["domains"]["HR"][0]["source_doc"] == "법률.pdf"
-    assert "domain" not in result["domains"]["HR"][0]  # 그룹 키와 중복 제거
+    first = main.list_documents(offset=0, limit=10)
+    assert first.total == 25
+    assert len(first.documents) == 10
+    assert first.has_more is True
+    assert first.documents[0].name == "문서_000.pdf"
+    assert first.documents[0].type == "PDF"
 
-    filtered = main.list_documents(domain="hr")  # 대소문자 무관
-    assert set(filtered["domains"]) == {"HR"}
-    assert filtered["total_documents"] == 1
+    second = main.list_documents(offset=10, limit=10)
+    assert second.documents[0].name == "문서_010.pdf"  # 이어지는 페이지
+    assert second.has_more is True
+
+    last = main.list_documents(offset=20, limit=10)
+    assert len(last.documents) == 5
+    assert last.has_more is False  # 마지막 페이지
+
+
+def test_문서_목록_도메인_필터(monkeypatch) -> None:
+    fake_docs = [_fake_doc(0, "HR"), _fake_doc(1, "FINANCE_LEGAL"), _fake_doc(2, "HR")]
+    monkeypatch.setattr(main.vectorstore, "list_documents", lambda: list(fake_docs))
+
+    result = main.list_documents(domain="finance_legal")  # 대소문자 무관
+    assert result.total == 1
+    assert result.documents[0].domain == "FINANCE_LEGAL"
+    assert result.has_more is False
+
+
+def test_문서_목록_빈_저장소(monkeypatch) -> None:
+    monkeypatch.setattr(main.vectorstore, "list_documents", lambda: [])
+    result = main.list_documents()
+    assert result.total == 0
+    assert result.documents == []
+    assert result.has_more is False
 
 
 # ---------- _status_after_node ----------

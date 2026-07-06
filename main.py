@@ -15,8 +15,10 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
+from datetime import datetime
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -289,31 +291,85 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/documents", summary="적재 문서 목록 (도메인별 집계)")
-def list_documents(domain: str | None = None) -> dict:
-    """적재된 문서 인벤토리를 도메인별로 그룹핑해 반환한다 (관리·운영용).
+class DocumentItem(BaseModel):
+    """적재 문서 1건의 요약 정보."""
 
-    - `domain` 쿼리 파라미터로 특정 도메인만 필터 가능 (예: `?domain=HR`)
-    - 응답: `domains` (도메인 → 문서 목록), `total_documents`, `total_chunks`.
-      문서 항목: source_doc / visibility / owning_department / chunk_count
-    - ⚠ DEPT_ONLY 문서의 존재(문서명)도 노출되므로 관리 용도로만 쓸 것.
-      일반 사용자 화면에 그대로 내보내지 말 것
-    """
-    documents = vectorstore.list_documents()
+    name: str = Field(description="문서 파일명 (source_doc)")
+    type: str = Field(description='파일 형식 (확장자 대문자, 예: "PDF", "MD")')
+    domain: str = Field(description="적재 시 지정된 도메인")
+    visibility: str = Field(description='"ALL" | "DEPT_ONLY"')
+    owning_department: str = Field(description="소유 부서 (ACL)")
+    chunk_count: int = Field(description="이 문서에서 생성된 자식 청크 수")
+    applied_at: datetime = Field(description="적재(갱신) 시각 — 청크 중 최신 created_at")
+
+
+class DocumentListOutput(BaseModel):
+    """GET /documents 응답 (무한 스크롤 페이지네이션)."""
+
+    documents: list[DocumentItem]
+    total: int = Field(description="필터 적용 후 전체 문서 수")
+    offset: int
+    limit: int
+    has_more: bool = Field(description="true면 offset += limit으로 다음 페이지 요청")
+
+
+@app.get(
+    "/documents",
+    response_model=DocumentListOutput,
+    summary="적재 문서 목록 (무한 스크롤)",
+    description=(
+        "벡터스토어에 인덱싱된 문서 목록을 반환한다 (관리·운영용).\n\n"
+        "**무한 스크롤**: 첫 요청은 `offset=0`으로 시작하고, 응답의 `has_more`가 "
+        "`true`이면 `offset += limit`으로 다음 페이지를 요청한다. 정렬은 문서명 "
+        "오름차순으로 고정되어 페이지가 안정적이다.\n\n"
+        "**도메인 필터**: `?domain=HR`처럼 지정하면 해당 도메인 문서만 반환한다 "
+        "(HR | TECH | FINANCE_LEGAL | GENERAL, 대소문자 무관).\n\n"
+        "⚠ DEPT_ONLY 문서의 존재(문서명)도 노출되므로 일반 사용자 화면에 "
+        "그대로 내보내지 말 것."
+    ),
+)
+def list_documents(
+    offset: Annotated[int, Query(ge=0, description="건너뛸 문서 수")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100, description="한 번에 반환할 문서 수")] = 20,
+    domain: Annotated[str | None, Query(description="도메인 필터 (예: HR)")] = None,
+) -> DocumentListOutput:
+    all_documents = vectorstore.list_documents()
     if domain:
         wanted = domain.strip().upper()
-        documents = [d for d in documents if d["domain"] == wanted]
+        all_documents = [d for d in all_documents if d["domain"] == wanted]
 
-    grouped: dict[str, list[dict]] = {}
-    for doc in documents:
-        item = {key: value for key, value in doc.items() if key != "domain"}
-        grouped.setdefault(doc["domain"], []).append(item)
-
-    return {
-        "domains": grouped,
-        "total_documents": len(documents),
-        "total_chunks": sum(d["chunk_count"] for d in documents),
-    }
+    total = len(all_documents)
+    page = all_documents[offset : offset + limit]
+    logger.info(
+        "문서 목록 조회: domain=%s, offset=%d, limit=%d → %d/%d건",
+        domain or "(전체)",
+        offset,
+        limit,
+        len(page),
+        total,
+    )
+    return DocumentListOutput(
+        documents=[
+            DocumentItem(
+                name=doc["source_doc"],
+                type=(
+                    doc["source_doc"].rsplit(".", 1)[-1].upper()
+                    if "." in doc["source_doc"]
+                    else "UNKNOWN"
+                ),
+                domain=doc["domain"],
+                visibility=doc["visibility"],
+                owning_department=doc["owning_department"],
+                chunk_count=doc["chunk_count"],
+                applied_at=datetime.fromtimestamp(doc["applied_at"]),
+            )
+            for doc in page
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=(offset + limit) < total,
+    )
 
 
 _QUERY_RESPONSES = {
