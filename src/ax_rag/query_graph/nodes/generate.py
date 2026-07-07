@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ax_rag.retrieval_graph.budget import trim_history
-from ax_rag.retrieval_graph.prompts import (
+from ax_rag.query_graph.budget import trim_history
+from ax_rag.query_graph.prompts import (
     GENERATE_SYSTEM_PROMPT,
     GENERATE_USER_TEMPLATE,
     format_documents,
     history_to_messages,
 )
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -23,7 +23,7 @@ from ax_rag.shared.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
-def generate(state: RetrievalState) -> dict:
+def generate(state: QueryState) -> dict:
     """<document> delimiter로 감싼 근거 + 원본/재작성 질문으로 답변 초안을 만든다."""
     chunks = state.get("retrieved_chunks") or []
     if not chunks:

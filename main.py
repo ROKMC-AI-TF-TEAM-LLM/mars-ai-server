@@ -23,8 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ax_rag.retrieval_graph.graph import graph
-from ax_rag.retrieval_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_DESCRIPTIONS, TOOL_NODES
+from ax_rag.query_graph.graph import graph
+from ax_rag.query_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_DESCRIPTIONS, TOOL_NODES
 from ax_rag.shared import vectorstore
 from ax_rag.shared.audit_log import log_query
 from ax_rag.shared.config import DOMAIN_LABELS, DOMAINS, get_config

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import requests
 
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared import parent_store
 from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
@@ -28,7 +28,7 @@ def _score_candidates(query: str, passages: list[str]) -> list[float]:
     return response.json()["scores"]
 
 
-def rerank(state: RetrievalState) -> dict:
+def rerank(state: QueryState) -> dict:
     """리랭크 top_n=5 확정 후 그 5개만 부모 청크로 치환한다."""
     config = get_config()
     candidates = state.get("retrieved_candidates") or []

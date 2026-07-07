@@ -1,15 +1,15 @@
-"""retrieval_graph 조건부 분기 유닛 테스트 (finalize / increment_retry / fallback)."""
+"""query_graph 조건부 분기 유닛 테스트 (finalize / increment_retry / fallback)."""
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.graph import (
+from ax_rag.query_graph.graph import (
     after_route,
     after_verify,
     fallback,
     finalize,
     increment_retry,
 )
-from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
+from ax_rag.query_graph.prompts import FALLBACK_ANSWER
 
 
 def test_등록된_도구_intent면_해당_노드로_직행한다() -> None:

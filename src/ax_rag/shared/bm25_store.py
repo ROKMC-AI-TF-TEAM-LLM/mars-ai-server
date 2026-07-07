@@ -2,9 +2,9 @@
 
 - 인덱스는 부분 갱신이 불가하므로 적재/갱신 시 전체 재빌드한다 (야간 배치 전제)
 - 인덱스가 없으면 load가 None을 반환하고, 검색은 빈 리스트를 반환한다
-  (retrieval_graph는 dense 단독으로 폴백)
+  (query_graph는 dense 단독으로 폴백)
 - 주의: BM25 결과에는 Milvus ACL 필터가 적용되지 않으므로, 호출 측에서
-  반드시 filter_by_acl() 후처리를 거쳐야 한다 (retrieval_graph/acl.py)
+  반드시 filter_by_acl() 후처리를 거쳐야 한다 (query_graph/acl.py)
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel
 
-from ax_rag.retrieval_graph.tool_fallback import extract_tool_args
+from ax_rag.query_graph.tool_fallback import extract_tool_args
 
 
 class _Schema(BaseModel):

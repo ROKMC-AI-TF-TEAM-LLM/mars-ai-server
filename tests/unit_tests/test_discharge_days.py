@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from ax_rag.retrieval_graph.nodes.discharge_days import (
+from ax_rag.query_graph.nodes.discharge_days import (
     NO_DATE_ANSWER,
     build_answer,
     discharge_days,

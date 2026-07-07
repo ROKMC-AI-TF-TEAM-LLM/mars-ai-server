@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from ax_rag.retrieval_graph.nodes import bm25_retrieve as bm25_module
-from ax_rag.retrieval_graph.nodes import dense_retrieve as dense_module
+from ax_rag.query_graph.nodes import bm25_retrieve as bm25_module
+from ax_rag.query_graph.nodes import dense_retrieve as dense_module
 
 _BM25_RESULTS = [
     {

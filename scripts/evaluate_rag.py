@@ -23,11 +23,11 @@ import json
 import sys
 from pathlib import Path
 
-from ax_rag.retrieval_graph.fusion import rrf_fuse
-from ax_rag.retrieval_graph.nodes.bm25_retrieve import bm25_retrieve
-from ax_rag.retrieval_graph.nodes.dense_retrieve import dense_retrieve
-from ax_rag.retrieval_graph.nodes.generate import generate
-from ax_rag.retrieval_graph.nodes.rerank import rerank as rerank_node
+from ax_rag.query_graph.fusion import rrf_fuse
+from ax_rag.query_graph.nodes.bm25_retrieve import bm25_retrieve
+from ax_rag.query_graph.nodes.dense_retrieve import dense_retrieve
+from ax_rag.query_graph.nodes.generate import generate
+from ax_rag.query_graph.nodes.rerank import rerank as rerank_node
 from ax_rag.shared import parent_store
 from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.llm_client import get_llm

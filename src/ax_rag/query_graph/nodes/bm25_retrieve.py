@@ -7,8 +7,8 @@
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.acl import filter_by_acl
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.acl import filter_by_acl
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.bm25_store import bm25_search
 from ax_rag.shared.logging_setup import get_logger
 
@@ -21,7 +21,7 @@ TOP_K = 20
 _OVERSAMPLE_FACTOR = 3
 
 
-def bm25_retrieve(state: RetrievalState) -> dict:
+def bm25_retrieve(state: QueryState) -> dict:
     """BM25 검색 → filter_by_acl 후처리(우회 금지) → top_k=20."""
     query = state.get("rewritten_query") or state["question"]
     scope = state.get("requested_domain") or "GENERAL"  # GENERAL=도메인 제한 없음

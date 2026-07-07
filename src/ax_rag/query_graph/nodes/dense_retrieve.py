@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import requests
 
-from ax_rag.retrieval_graph.acl import build_acl_filter_expr
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.acl import build_acl_filter_expr
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
 from ax_rag.shared.vectorstore import get_client, get_collection
@@ -67,7 +67,7 @@ def _search(embedding: list[float], expr: str) -> list[dict]:
     return candidates
 
 
-def dense_retrieve(state: RetrievalState) -> dict:
+def dense_retrieve(state: QueryState) -> dict:
     """벡터 검색 top_k=20. 보안 필터 항상 적용, 도메인은 요청 명시 시에만 한정."""
     query = state.get("rewritten_query") or state["question"]
     # 요청이 도메인을 안 정했으면 GENERAL(=도메인 절 없음)로 전 도메인 검색

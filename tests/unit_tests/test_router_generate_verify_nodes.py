@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
-from ax_rag.retrieval_graph.nodes import generate as generate_module
-from ax_rag.retrieval_graph.nodes import router as router_module
-from ax_rag.retrieval_graph.nodes import smalltalk as smalltalk_module
-from ax_rag.retrieval_graph.nodes import verify as verify_module
-from ax_rag.retrieval_graph.prompts import SMALLTALK_DEFAULT_ANSWER
+from ax_rag.query_graph.nodes import generate as generate_module
+from ax_rag.query_graph.nodes import router as router_module
+from ax_rag.query_graph.nodes import smalltalk as smalltalk_module
+from ax_rag.query_graph.nodes import verify as verify_module
+from ax_rag.query_graph.prompts import SMALLTALK_DEFAULT_ANSWER
 
 
 class _FakeLLM:

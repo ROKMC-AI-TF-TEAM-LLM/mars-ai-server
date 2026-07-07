@@ -14,13 +14,13 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from ax_rag.retrieval_graph.prompts import (
+from ax_rag.query_graph.prompts import (
     VERIFY_SYSTEM_PROMPT,
     VERIFY_USER_TEMPLATE,
     format_documents,
 )
-from ax_rag.retrieval_graph.state import RetrievalState
-from ax_rag.retrieval_graph.tool_fallback import call_with_schema
+from ax_rag.query_graph.state import QueryState
+from ax_rag.query_graph.tool_fallback import call_with_schema
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
@@ -74,7 +74,7 @@ def rule_based_verify(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[
     return True, "규칙 검증 통과"
 
 
-def verify(state: RetrievalState) -> dict:
+def verify(state: QueryState) -> dict:
     """규칙 검증 → LLM 검증. 판정 불가 시 grounded=False (fail-closed)."""
     draft = state.get("draft_answer") or ""
     chunks = state.get("retrieved_chunks") or []

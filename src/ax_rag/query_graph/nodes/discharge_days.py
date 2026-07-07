@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -72,7 +72,7 @@ def build_answer(question: str, history: list[dict], today: date) -> str:
     return f"전역일({formatted})이 이미 {-remaining}일 지났습니다. 전역을 축하드립니다!"
 
 
-def discharge_days(state: RetrievalState) -> dict:
+def discharge_days(state: QueryState) -> dict:
     """전역일 D-day 계산. 문서 근거를 주장하지 않으므로 grounded=False."""
     answer = build_answer(state["question"], state.get("conversation_history") or [], date.today())
     logger.info("전역일 계산: %s", answer[:60])

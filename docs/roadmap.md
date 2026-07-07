@@ -49,7 +49,7 @@
 ## 3단계 — 검색 + 리랭크 축소 그래프
 
 작업:
-- retrieval_graph/acl.py: build_acl_filter_expr + filter_by_acl
+- query_graph/acl.py: build_acl_filter_expr + filter_by_acl
 - nodes/dense_retrieve.py, nodes/bm25_retrieve.py, fusion.py + nodes/fuse.py, nodes/rerank.py
 - generate/verify 없이 route(더미 통과) → 검색 → 융합 → 리랭크만 연결한 축소 그래프
 
@@ -65,7 +65,7 @@
 - prompts.py: 라우터/생성/검증 프롬프트. document delimiter와
   인젝션 방어 지시 포함 (interfaces.md §7)
 - nodes/router.py: ClassifyAndRewrite tool-call, 실패 시 원본 + GENERAL 폴백
-- retrieval_graph/budget.py: trim_history
+- query_graph/budget.py: trim_history
 - nodes/generate.py: 원본 질문 + rewritten_query 둘 다 프롬프트에
 - nodes/verify.py: rule_based_verify 1차 → LLM VerifyAnswer 2차, fail-closed
 - graph.py: 전체 조립, 조건부 엣지 (finalize / increment_retry / fallback)

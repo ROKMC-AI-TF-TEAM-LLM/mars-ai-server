@@ -4,7 +4,7 @@
 
 ```
 [프론트엔드] --요청--> [미들웨어 백엔드] --요청--> [A.X RAG 서버 ← 본 프로젝트]
-  화면 / 입력            인증, 세션, 라우팅         main.py -> retrieval_graph
+  화면 / 입력            인증, 세션, 라우팅         main.py -> query_graph
 ```
 
 본 프로젝트의 범위는 가장 오른쪽 "A.X RAG 서버" 하나다. 프론트엔드와
@@ -61,8 +61,8 @@ ax-rag-multiagent/
 │   │   ├── state.py            # IndexState
 │   │   ├── chunking.py         # 구조 인식 분할 + 부모-자식 청킹
 │   │   └── graph.py            # chunk -> embed_and_upsert -> END
-│   └── retrieval_graph/
-│       ├── state.py            # RetrievalState
+│   └── query_graph/
+│       ├── state.py            # QueryState
 │       ├── prompts.py          # 라우터/생성/검증 시스템 프롬프트
 │       ├── acl.py              # ACL 필터 (표현식 + BM25 후처리)
 │       ├── fusion.py           # RRF 융합
@@ -85,7 +85,7 @@ ax-rag-multiagent/
     └── integration_tests/
 ```
 
-## 4. retrieval_graph 흐름 (10노드 + 조건부 분기)
+## 4. query_graph 흐름 (10노드 + 조건부 분기)
 
 ```
 route ─(SMALLTALK)→ smalltalk ──────────────────────────────────────→ END

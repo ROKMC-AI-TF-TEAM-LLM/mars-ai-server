@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ax_rag.retrieval_graph.budget import trim_history
-from ax_rag.retrieval_graph.prompts import (
+from ax_rag.query_graph.budget import trim_history
+from ax_rag.query_graph.prompts import (
     SMALLTALK_DEFAULT_ANSWER,
     SMALLTALK_SYSTEM_PROMPT,
     history_to_messages,
 )
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -22,7 +22,7 @@ from ax_rag.shared.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
-def smalltalk(state: RetrievalState) -> dict:
+def smalltalk(state: QueryState) -> dict:
     """가벼운 대화 응답. 실패해도 기본 인사로 폴백해 파이프라인을 죽이지 않는다."""
     config = get_config()
     history = trim_history(state.get("conversation_history") or [], config.HISTORY_MAX_TOKENS)

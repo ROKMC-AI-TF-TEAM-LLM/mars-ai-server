@@ -2,7 +2,7 @@
   "$schema": "https://langgra.ph/schema.json",
   "dependencies": ["."],
   "graphs": {
-    "retrieval_graph": "./src/ax_rag/retrieval_graph/graph.py:graph",
+    "query_graph": "./src/ax_rag/query_graph/graph.py:graph",
     "indexer_graph": "./src/ax_rag/indexer_graph/graph.py:graph"
   },
   "env": ".env"

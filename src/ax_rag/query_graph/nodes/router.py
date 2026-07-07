@@ -19,11 +19,11 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from ax_rag.retrieval_graph.budget import trim_history
-from ax_rag.retrieval_graph.prompts import ROUTER_SYSTEM_TEMPLATE
-from ax_rag.retrieval_graph.state import RetrievalState
-from ax_rag.retrieval_graph.tool_fallback import call_with_schema
-from ax_rag.retrieval_graph.tools import DOC_SEARCH, TOOL_DESCRIPTIONS, valid_intents
+from ax_rag.query_graph.budget import trim_history
+from ax_rag.query_graph.prompts import ROUTER_SYSTEM_TEMPLATE
+from ax_rag.query_graph.state import QueryState
+from ax_rag.query_graph.tool_fallback import call_with_schema
+from ax_rag.query_graph.tools import DOC_SEARCH, TOOL_DESCRIPTIONS, valid_intents
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -57,7 +57,7 @@ def _build_router_input(question: str, history: list[dict]) -> str:
     )
 
 
-def route(state: RetrievalState) -> dict:
+def route(state: QueryState) -> dict:
     """질문 + 대화 이력 → rewritten_query + intent (구조화 호출 1회)."""
     config = get_config()
     question = state["question"]

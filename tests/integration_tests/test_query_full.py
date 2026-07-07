@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 
 def test_멀티턴_맥락_해소_E2E() -> None:
     """roadmap 4단계 DoD: "육아휴직 알려줘" → "그거 얼마나 쓸 수 있어?"."""
-    from ax_rag.retrieval_graph.graph import graph
+    from ax_rag.query_graph.graph import graph
 
     result = graph.invoke(
         {
@@ -35,8 +35,8 @@ def test_멀티턴_맥락_해소_E2E() -> None:
 
 def test_근거_없는_질문은_fallback에_도달한다() -> None:
     """사내 문서에 없는 주제 → verify fail-closed → fallback."""
-    from ax_rag.retrieval_graph.graph import graph
-    from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
+    from ax_rag.query_graph.graph import graph
+    from ax_rag.query_graph.prompts import FALLBACK_ANSWER
 
     result = graph.invoke(
         {"question": "우주 정거장 도킹 절차를 알려줘", "user_department": "HR_TEAM"}

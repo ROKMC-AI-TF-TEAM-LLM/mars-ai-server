@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from ax_rag.retrieval_graph.nodes import rerank as rerank_module
+from ax_rag.query_graph.nodes import rerank as rerank_module
 
 _PARENTS = {
     "p1": "부모 텍스트 1: 육아휴직은 최대 1년까지 사용할 수 있다. (전후 맥락 포함)",

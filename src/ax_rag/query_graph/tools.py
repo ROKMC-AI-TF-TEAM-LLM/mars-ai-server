@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ax_rag.retrieval_graph.nodes.discharge_days import discharge_days
-from ax_rag.retrieval_graph.nodes.smalltalk import smalltalk
+from ax_rag.query_graph.nodes.discharge_days import discharge_days
+from ax_rag.query_graph.nodes.smalltalk import smalltalk
 
 # 기본 경로: 문서 검색 파이프라인 (도구 아님)
 DOC_SEARCH = "DOC_SEARCH"

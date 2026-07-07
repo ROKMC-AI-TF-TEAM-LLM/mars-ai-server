@@ -1,9 +1,9 @@
-"""retrieval_graph 상태 정의 (interfaces.md §3)."""
+"""query_graph 상태 정의 (interfaces.md §3)."""
 
 from typing import TypedDict
 
 
-class RetrievalState(TypedDict):
+class QueryState(TypedDict):
     """질의응답 그래프 상태.
 
     question/conversation_history/user_department는 호출자 입력,

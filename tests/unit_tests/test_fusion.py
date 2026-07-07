@@ -1,10 +1,10 @@
-"""retrieval_graph/fusion.py 유닛 테스트 — RRF 순위 결합 정확성 (roadmap 3단계 DoD)."""
+"""query_graph/fusion.py 유닛 테스트 — RRF 순위 결합 정확성 (roadmap 3단계 DoD)."""
 
 from __future__ import annotations
 
 import pytest
 
-from ax_rag.retrieval_graph.fusion import rrf_fuse
+from ax_rag.query_graph.fusion import rrf_fuse
 
 
 def _mk(chunk_id: str, **extra: object) -> dict:

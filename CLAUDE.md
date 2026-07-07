@@ -9,7 +9,7 @@
 
 - 목적: 사내 업무 문서 검색 챗봇 (온프레미스, 에어갭 내부망)
 - 스택: LangGraph + vLLM(A.X 4.0 Light 7B) + Milvus Lite + BGE-M3 + bge-reranker-v2-m3 + bm25s/Kiwi
-- 구조: indexer_graph(문서 적재) / retrieval_graph(질의응답) 두 그래프
+- 구조: indexer_graph(문서 적재) / query_graph(질의응답) 두 그래프
 - 배포 대상: 내부망 L40 48GB 단일 서버 (모든 프로세스 동일 서버)
 - 개발 환경: RTX 4050 Laptop 6GB (프롬프트/로직 테스트만, 최종 검증은 L40)
 

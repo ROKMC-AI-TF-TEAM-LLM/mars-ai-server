@@ -1,4 +1,4 @@
-"""retrieval_graph 전체 조립 (architecture.md §4).
+"""query_graph 전체 조립 (architecture.md §4).
 
 route ─(도구 intent)→ TOOL_NODES[intent] → END   (레지스트리 기반, tools.py)
   └─(DOC_SEARCH)→ dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
@@ -15,28 +15,28 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from ax_rag.retrieval_graph.nodes.bm25_retrieve import bm25_retrieve
-from ax_rag.retrieval_graph.nodes.dense_retrieve import dense_retrieve
-from ax_rag.retrieval_graph.nodes.fuse import fuse
-from ax_rag.retrieval_graph.nodes.generate import generate
-from ax_rag.retrieval_graph.nodes.rerank import rerank
-from ax_rag.retrieval_graph.nodes.router import route
-from ax_rag.retrieval_graph.nodes.verify import verify
-from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
-from ax_rag.retrieval_graph.state import RetrievalState
-from ax_rag.retrieval_graph.tools import DOC_SEARCH, TOOL_NODES
+from ax_rag.query_graph.nodes.bm25_retrieve import bm25_retrieve
+from ax_rag.query_graph.nodes.dense_retrieve import dense_retrieve
+from ax_rag.query_graph.nodes.fuse import fuse
+from ax_rag.query_graph.nodes.generate import generate
+from ax_rag.query_graph.nodes.rerank import rerank
+from ax_rag.query_graph.nodes.router import route
+from ax_rag.query_graph.nodes.verify import verify
+from ax_rag.query_graph.prompts import FALLBACK_ANSWER
+from ax_rag.query_graph.state import QueryState
+from ax_rag.query_graph.tools import DOC_SEARCH, TOOL_NODES
 from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
 
-def finalize(state: RetrievalState) -> dict:
+def finalize(state: QueryState) -> dict:
     """검증 통과한 초안을 확정 답변으로 승격한다."""
     return {"final_answer": state.get("draft_answer") or ""}
 
 
-def increment_retry(state: RetrievalState) -> dict:
+def increment_retry(state: QueryState) -> dict:
     """검증 실패 시 재시도 횟수를 올리고 generate로 되돌아간다."""
     retry_count = (state.get("retry_count") or 0) + 1
     logger.info(
@@ -45,13 +45,13 @@ def increment_retry(state: RetrievalState) -> dict:
     return {"retry_count": retry_count}
 
 
-def fallback(state: RetrievalState) -> dict:
+def fallback(state: QueryState) -> dict:
     """재시도 소진 시 안전한 대체 답변을 확정한다 (fail-closed의 종착지)."""
     logger.warning("재시도 소진 → fallback 답변 (사유: %s)", state.get("verify_reason"))
     return {"final_answer": FALLBACK_ANSWER}
 
 
-def after_route(state: RetrievalState) -> str:
+def after_route(state: QueryState) -> str:
     """route 결과 분기: 등록된 도구 intent면 해당 노드, 아니면 검색 파이프라인."""
     intent = state.get("intent") or DOC_SEARCH
     if intent in TOOL_NODES:
@@ -59,7 +59,7 @@ def after_route(state: RetrievalState) -> str:
     return "dense_retrieve"
 
 
-def after_verify(state: RetrievalState) -> str:
+def after_verify(state: QueryState) -> str:
     """verify 결과에 따른 분기: finalize / increment_retry / fallback."""
     if state.get("grounded"):
         return "finalize"
@@ -69,7 +69,7 @@ def after_verify(state: RetrievalState) -> str:
 
 
 def _build_graph() -> StateGraph:
-    builder = StateGraph(RetrievalState)
+    builder = StateGraph(QueryState)
     builder.add_node("route", route)
     builder.add_node("dense_retrieve", dense_retrieve)
     builder.add_node("bm25_retrieve", bm25_retrieve)

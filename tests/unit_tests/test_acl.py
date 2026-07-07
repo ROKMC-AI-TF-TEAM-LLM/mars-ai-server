@@ -1,8 +1,8 @@
-"""retrieval_graph/acl.py 유닛 테스트 — 보안 테스트 (roadmap 3단계 DoD 필수)."""
+"""query_graph/acl.py 유닛 테스트 — 보안 테스트 (roadmap 3단계 DoD 필수)."""
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.acl import build_acl_filter_expr, filter_by_acl
+from ax_rag.query_graph.acl import build_acl_filter_expr, filter_by_acl
 
 _CANDIDATES = [
     {"chunk_id": "a", "domain": "HR", "owning_department": "HR_TEAM", "visibility": "ALL"},

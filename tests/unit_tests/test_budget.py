@@ -1,8 +1,8 @@
-"""retrieval_graph/budget.py 유닛 테스트 — 이력 상한 준수 (roadmap 4단계 DoD)."""
+"""query_graph/budget.py 유닛 테스트 — 이력 상한 준수 (roadmap 4단계 DoD)."""
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.budget import approx_tokens, trim_history
+from ax_rag.query_graph.budget import approx_tokens, trim_history
 
 
 def _turn(role: str, chars: int) -> dict:

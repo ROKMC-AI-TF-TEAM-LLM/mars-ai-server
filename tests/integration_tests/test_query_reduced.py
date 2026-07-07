@@ -12,7 +12,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_축소_그래프_E2E_상위_5개_반환() -> None:
-    from ax_rag.retrieval_graph.graph import graph
+    from ax_rag.query_graph.graph import graph
 
     result = graph.invoke(
         {"question": "육아휴직은 얼마나 쓸 수 있어?", "user_department": "HR_TEAM"}
@@ -28,7 +28,7 @@ def test_축소_그래프_E2E_상위_5개_반환() -> None:
 
 def test_타_부서_사용자는_DEPT_ONLY_문서를_받지_못한다() -> None:
     """보안 E2E: 경비규정.txt는 FIN_TEAM DEPT_ONLY로 적재됨."""
-    from ax_rag.retrieval_graph.graph import graph
+    from ax_rag.query_graph.graph import graph
 
     result = graph.invoke({"question": "법인카드 한도 알려줘", "user_department": "HR_TEAM"})
     sources = {c["source_doc"] for c in result["retrieved_chunks"]}

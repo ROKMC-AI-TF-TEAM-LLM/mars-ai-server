@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.fusion import rrf_fuse
-from ax_rag.retrieval_graph.state import RetrievalState
+from ax_rag.query_graph.fusion import rrf_fuse
+from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
 
-def fuse(state: RetrievalState) -> dict:
+def fuse(state: QueryState) -> dict:
     """RRF 융합 (k=60 시작, 평가로 조정) → 상위 20."""
     fused = rrf_fuse(
         state.get("dense_candidates") or [],

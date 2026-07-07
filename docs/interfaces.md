@@ -50,8 +50,8 @@ class IndexState(TypedDict):
                                      #   "parent_id": str, "section_title": str|None}, ...]
     chunks_indexed: Optional[int]
 
-# retrieval_graph/state.py
-class RetrievalState(TypedDict):
+# query_graph/state.py
+class QueryState(TypedDict):
     question: str                                # 원본 질문 (generate 프롬프트용)
     conversation_history: Optional[list[dict]]   # [{"role": "user"|"assistant", "content": str}, ...]
     rewritten_query: Optional[str]               # route가 생성한 검색용 쿼리
@@ -105,7 +105,7 @@ def get_parent_collection(drop_existing: bool = False) -> "Collection": ...
 def get_parent(parent_id: str) -> str:
     """parent_text 반환. 없으면 빈 문자열."""
 
-# retrieval_graph/acl.py
+# query_graph/acl.py
 def build_acl_filter_expr(domain: str, user_department: str) -> str: ...
 def filter_by_acl(candidates: list[dict], domain: str, user_department: str) -> list[dict]:
     """BM25 결과에 ACL 후처리 필터 적용. dense는 Milvus 필터로
@@ -119,18 +119,18 @@ def load_bm25_index() -> "bm25s.BM25":
 def bm25_search(query: str, top_k: int = 20) -> list[dict]:
     """Kiwi 토큰화 → bm25s 검색 → 메타데이터 포함 결과 반환."""
 
-# retrieval_graph/fusion.py
+# query_graph/fusion.py
 def rrf_fuse(
     dense_results: list[dict], bm25_results: list[dict],
     k: int = 60, top_n: int = 20,
 ) -> list[dict]:
     """Reciprocal Rank Fusion. k는 관례값 60에서 시작, 평가로 조정."""
 
-# retrieval_graph/budget.py
+# query_graph/budget.py
 def trim_history(history: list[dict], max_tokens: int = 1500) -> list[dict]:
     """최근 턴부터 역순으로 채우고 상한 초과분 절삭. 문자수/2.2 근사 사용."""
 
-# retrieval_graph/nodes/verify.py
+# query_graph/nodes/verify.py
 def rule_based_verify(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[bool, str]:
     """1차 규칙 검증: draft_answer에 등장하는 숫자, 날짜, 문서명이
     retrieved_chunks 텍스트에 실재하는지 확인. (통과 여부, 사유) 반환.
@@ -195,7 +195,7 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 
 - `messages`의 role은 미들웨어 규약 `"human"` | `"ai"`.
   main.py 경계에서 내부 표현 `"user"` | `"assistant"`로 변환한다
-  (RetrievalState.conversation_history는 내부 표현 유지)
+  (QueryState.conversation_history는 내부 표현 유지)
 - `user_department`는 ACL의 근거. **누락 시 가장 제한적으로 처리**:
   visibility가 `"ALL"`인 문서만 검색 대상 (DEPT_ONLY 전부 배제).
   미들웨어가 실제로 이 필드를 보내는지 확정 필요 (미확정 항목)
@@ -284,7 +284,7 @@ class ClassifyAndRewrite(BaseModel):
     """멀티턴 맥락 해소 + 구어체 정규화 + 의도(경로) 분류"""
     rewritten_query: str   # 검색에 최적화된 쿼리
     intent: str            # "DOC_SEARCH" | 도구 레지스트리 키 ("SMALLTALK" 등)
-    # intent는 처리 경로 선택값이다 (retrieval_graph/tools.py의 레지스트리 기반).
+    # intent는 처리 경로 선택값이다 (query_graph/tools.py의 레지스트리 기반).
     # DOC_SEARCH: 기본 검색 파이프라인. SMALLTALK: 검색·검증 없이 직접 응답.
     # 분류 실패/미지 값은 DOC_SEARCH 폴백. 요청의 tool 필드가 intent를 선설정하면
     # 라우터는 분류를 건너뛰고 재작성만 수행한다 (강제 모드, 잡담 예외 없음)
@@ -406,7 +406,7 @@ datasets==3.2.0
   "$schema": "https://langgra.ph/schema.json",
   "dependencies": ["."],
   "graphs": {
-    "retrieval_graph": "./src/ax_rag/retrieval_graph/graph.py:graph",
+    "query_graph": "./src/ax_rag/query_graph/graph.py:graph",
     "indexer_graph": "./src/ax_rag/indexer_graph/graph.py:graph"
   },
   "env": ".env"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ax_rag.retrieval_graph.nodes.verify import rule_based_verify
+from ax_rag.query_graph.nodes.verify import rule_based_verify
 
 _CHUNKS = [
     {

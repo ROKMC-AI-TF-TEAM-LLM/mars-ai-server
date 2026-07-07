@@ -4,7 +4,7 @@
 - 진입점(main.py, serving/*, scripts/*): ``setup_logging()``을 함께 호출해
   서드파티(httpx, uvicorn 등) 로그까지 같은 포맷으로 맞춘다
 
-출력 예: [19:26:31] INFO ax_rag.retrieval_graph.nodes.router: 라우팅: domain=HR, ...
+출력 예: [19:26:31] INFO ax_rag.query_graph.nodes.router: 라우팅: domain=HR, ...
 로그 레벨은 config.LOG_LEVEL(.env)로 제어한다.
 """
 
