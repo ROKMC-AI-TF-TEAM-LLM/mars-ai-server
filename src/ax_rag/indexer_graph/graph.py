@@ -74,10 +74,11 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
-def _rebuild_bm25() -> None:
+def rebuild_bm25() -> None:
     """전체 자식 청크로 BM25 인덱스를 재빌드한다 (부분 갱신 불가).
 
     방금 insert된 청크가 조회에 보장되도록 먼저 flush한다.
+    적재 노드 내부뿐 아니라 문서 삭제 후 반영(ingest.delete_document)에도 쓰인다.
     """
     vectorstore.flush()
     rows = vectorstore.fetch_all_children(output_fields=["text", *_BM25_META_FIELDS])
@@ -116,7 +117,7 @@ def embed_and_upsert(state: IndexState) -> dict:
     # 부모를 먼저 넣어 자식 parent_id 참조가 조회 불가능해지는 구간을 없앤다
     parent_store.insert_parents(state.get("parents") or [])
     inserted = vectorstore.insert_children(rows)
-    _rebuild_bm25()
+    rebuild_bm25()
     logger.info("적재 완료: %s → 자식 %d건", state["source_doc"], inserted)
     return {"chunks_indexed": inserted}
 

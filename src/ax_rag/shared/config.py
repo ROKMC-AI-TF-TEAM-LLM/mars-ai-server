@@ -73,6 +73,9 @@ class Config:
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
+    # --- 문서 업로드 저장 경로 (POST /documents가 받은 파일 원본 보관) ---
+    UPLOAD_DIR: str = "./data/uploads"
+
     # --- 외부 서비스 호출 공통 timeout (초) ---
     HTTP_TIMEOUT_SECONDS: float = 60.0
 
@@ -133,6 +136,7 @@ def get_config() -> Config:
         MAX_VERIFY_RETRY=_env_int("MAX_VERIFY_RETRY", 1),
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
+        UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),
         HTTP_TIMEOUT_SECONDS=_env_float("HTTP_TIMEOUT_SECONDS", 60.0),
         LOG_LEVEL=_env_str("LOG_LEVEL", "INFO"),
         STREAM_TEXT_INTERVAL_MS=_env_int("STREAM_TEXT_INTERVAL_MS", 200),

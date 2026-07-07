@@ -277,6 +277,68 @@ data: {"type":"done"}
 - **미들웨어 책임**: 프론트 연결이 중단되면 본 서버로의 요청도 함께
   중단(abort)해야 한다. 전파하지 않으면 서버는 파이프라인을 끝까지 실행한다
 
+### 우리 서버 `GET /health` (9000)
+
+- `GET /health` → `{"status": "ok"}` — 생존 확인만 (빠름, 모델 상태 미검사)
+- `GET /health?deep=true` → 의존 서비스 4종 집계 (각 검사 timeout 5초):
+
+```json
+{
+  "status": "ok",
+  "services": {
+    "llm":       {"ok": true, "detail": "HTTP 200 (http://localhost:8000/v1/models)"},
+    "embedding": {"ok": true, "detail": "HTTP 200 (http://localhost:8001/health)"},
+    "reranker":  {"ok": true, "detail": "HTTP 200 (http://localhost:8002/health)"},
+    "milvus":    {"ok": true, "detail": "컬렉션 company_docs 있음"}
+  }
+}
+```
+
+- 하나라도 실패면 `status: "degraded"` — 미들웨어/프론트의 서버 상태 표시용.
+  degraded여도 `/query` 요청 자체는 거부되지 않는다
+- llm은 서빙(vLLM/llama.cpp)마다 전용 헬스 경로가 달라 OpenAI 호환
+  `GET {AX_BASE_URL}/models`로 확인한다. Milvus는 컬렉션 존재 조회
+  (컬렉션이 없어도 접속되면 ok — 첫 적재 전 상태)
+
+### 우리 서버 문서 관리 API (9000)
+
+**`POST /documents?name=...&domain=...&department=...&visibility=ALL`** — 적재/갱신
+
+- 본문: **파일 바이트 그대로** (`Content-Type: application/octet-stream`).
+  multipart가 아니다 — python-multipart 의존성을 늘리지 않기 위한 선택.
+  미들웨어는 프론트에서 받은 파일의 바이트를 그대로 relay한다
+- 쿼리 파라미터: `name`(필수, 파일명 — 경로 성분은 제거됨),
+  `domain`(필수, config.DOMAINS 중 하나 — 검색 필터와 달리 엄격 검증),
+  `department`(DEPT_ONLY면 필수), `visibility`(`ALL` 기본 | `DEPT_ONLY`)
+- 지원 형식 `.md`/`.txt`/`.pdf` (텍스트 파일은 UTF-8, 스캔본 PDF 실패), 최대 50MB
+- 같은 `name`이 이미 적재돼 있으면 **갱신**(기존 청크 삭제 후 재적재).
+  텍스트 추출 검증을 삭제보다 먼저 수행해 추출 실패 시 기존 데이터를 보존한다
+- 응답 **202** + 작업(job) 객체. 적재는 백그라운드 실행 (임베딩 소요 시간 때문):
+
+```json
+{
+  "job_id": "b1f...", "status": "queued", "source_doc": "훈령.pdf",
+  "domain": "DIRECTIVE", "owning_department": "HQ", "visibility": "ALL",
+  "submitted_at": "2026-07-07T10:00:00", "started_at": null, "finished_at": null,
+  "chunks_indexed": null, "deleted_chunks": null, "error": null
+}
+```
+
+- 적재/삭제 작업은 **한 번에 하나만 실행**된다 (BM25 전체 재빌드 직렬화).
+  나머지는 순서 대기. 원본 파일은 `UPLOAD_DIR`에 보관된다
+- 400: 파라미터 오류(형식·도메인·빈 본문), 413: 크기 초과
+
+**`GET /documents/jobs/{job_id}`** — 작업 상태 조회 (위와 같은 객체).
+상태 전이 `queued → running → done | error`. **인메모리 이력**이라 서버
+재시작 시 404 (적재된 청크는 유지). `GET /documents/jobs?limit=20`은
+최근 작업 목록(최신순)
+
+**`DELETE /documents/{name}`** — 문서 삭제 (name은 URL 인코딩)
+
+- 자식·부모 청크 삭제 후 BM25 전체 재빌드. **동기 처리** — 수 초~수십 초
+- 응답: `{"name": str, "deleted_chunks": int, "deleted_parents": int}`
+- 404: 미적재 문서, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
+
 ## 6. Tool 스키마 (vLLM `--tool-call-parser hermes`로 파싱)
 
 ```python
@@ -341,6 +403,9 @@ HISTORY_MAX_TOKENS=1500
 
 # --- 감사 로그 ---
 AUDIT_LOG_PATH=./data/audit_log.jsonl
+
+# --- 문서 업로드 저장 경로 (POST /documents 원본 보관) ---
+UPLOAD_DIR=./data/uploads
 
 # --- 오프라인/에어갭 필수 ---
 HF_HUB_OFFLINE=1
