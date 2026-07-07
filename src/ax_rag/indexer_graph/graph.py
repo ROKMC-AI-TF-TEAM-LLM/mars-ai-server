@@ -19,8 +19,10 @@ from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
-# 임베딩 서버 1회 호출당 텍스트 수 (서버 내부 배치와 별개의 요청 분할 단위)
-_EMBED_REQUEST_BATCH = 64
+# 임베딩 서버 1회 호출당 텍스트 수 (서버 내부 배치와 별개의 요청 분할 단위).
+# CPU 임베딩 환경에서 64배치가 60초 timeout을 초과하는 것을 실측 — 호출당
+# 처리 시간이 timeout 안에 들도록 16으로 유지한다
+_EMBED_REQUEST_BATCH = 16
 
 # BM25 재빌드 시 corpus 메타데이터로 보존할 필드 (ACL 후처리 필터에 필요한 필드 포함)
 _BM25_META_FIELDS = [
