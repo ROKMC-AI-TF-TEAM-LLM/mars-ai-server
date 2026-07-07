@@ -17,11 +17,9 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-# 도메인 분류 체계 (라우터 분류 결과이자 Milvus domain 필드의 허용 값)
-DOMAINS: tuple[str, ...] = ("HR", "TECH", "FINANCE_LEGAL", "GENERAL")
-
-# 문서 도메인이 아닌 특수 분류: 잡담/인사 → 검색·검증 없이 직접 응답 (문서 필드에는 쓰지 않는다)
-SMALLTALK_DOMAIN: str = "SMALLTALK"
+# 문서 도메인 체계 (Milvus domain 필드의 허용 값 = 요청 domain 필터의 허용 값)
+# MANUAL=교범, DIRECTIVE=훈령 (도메인 한정 검색 모드용, interfaces.md §5)
+DOMAINS: tuple[str, ...] = ("HR", "TECH", "FINANCE_LEGAL", "GENERAL", "MANUAL", "DIRECTIVE")
 
 # 한국어 토큰 수 근사: 문자수 / CHARS_PER_TOKEN (L40에서 실측 보정 예정)
 CHARS_PER_TOKEN: float = 2.2

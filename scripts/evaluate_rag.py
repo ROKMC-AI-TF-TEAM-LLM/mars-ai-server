@@ -29,7 +29,7 @@ from ax_rag.retrieval_graph.nodes.dense_retrieve import dense_retrieve
 from ax_rag.retrieval_graph.nodes.generate import generate
 from ax_rag.retrieval_graph.nodes.rerank import rerank as rerank_node
 from ax_rag.shared import parent_store
-from ax_rag.shared.config import get_config
+from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import setup_logging
 
@@ -71,9 +71,8 @@ def run_pipeline(
         "question": question,
         "rewritten_query": question,
         "user_department": user_department,
-        # 검색 노드는 requested_domain만 본다 (라우터 분류는 검색 범위 미제한)
-        "requested_domain": domain if domain in ("HR", "TECH", "FINANCE_LEGAL") else "",
-        "domain": domain,
+        # 검색 노드는 requested_domain만 본다 (GENERAL/미지 값 = 전 도메인)
+        "requested_domain": domain if domain in DOMAINS and domain != "GENERAL" else "",
     }
     dense = dense_retrieve(state)["dense_candidates"]
     bm25 = bm25_retrieve(state)["bm25_candidates"] if mode == "hybrid" else []

@@ -37,6 +37,16 @@ def test_알_수_없는_role은_건너뛴다() -> None:
 def test_도메인_정규화_허용값만_필터로_인정() -> None:
     assert main.normalize_requested_domain("HR") == "HR"
     assert main.normalize_requested_domain("finance_legal") == "FINANCE_LEGAL"  # 대소문자 허용
+    assert main.normalize_requested_domain("MANUAL") == "MANUAL"  # 교범
+    assert main.normalize_requested_domain("directive") == "DIRECTIVE"  # 훈령
+
+
+def test_tool_정규화() -> None:
+    assert main.normalize_tool("") == ""  # 자동 분류
+    assert main.normalize_tool("doc_search") == "DOC_SEARCH"  # 기본 경로, 대소문자 허용
+    assert main.normalize_tool("NO_SUCH_TOOL") == ""  # 미지 값 → 자동 분류
+    # SMALLTALK은 등록된 도구지만 강제 비허용 (verify 밖 규정 창작 방지, 실측)
+    assert main.normalize_tool("SMALLTALK") == ""
 
 
 def test_도메인_정규화_빈값_ALL_GENERAL_미지값은_전체_검색() -> None:
@@ -171,11 +181,11 @@ def test_문서_목록_빈_저장소(monkeypatch) -> None:
 
 
 def test_노드_완료에_따른_status_안내() -> None:
-    assert main._status_after_node("route", {"domain": "HR"}) == (
+    assert main._status_after_node("route", {"intent": "DOC_SEARCH"}) == (
         "retrieve",
-        "사내 문서를 검색하는 중...",
+        "군 내부 문서를 검색하는 중...",
     )
-    assert main._status_after_node("route", {"domain": "SMALLTALK"}) == (
+    assert main._status_after_node("route", {"intent": "SMALLTALK"}) == (
         "generate",
         "답변을 생성하는 중...",
     )

@@ -40,4 +40,4 @@ def test_수치_설정_타입과_기본값(config: Config) -> None:
 
 
 def test_도메인_분류_체계() -> None:
-    assert DOMAINS == ("HR", "TECH", "FINANCE_LEGAL", "GENERAL")
+    assert DOMAINS == ("HR", "TECH", "FINANCE_LEGAL", "GENERAL", "MANUAL", "DIRECTIVE")

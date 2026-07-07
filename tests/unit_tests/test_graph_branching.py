@@ -12,13 +12,17 @@ from ax_rag.retrieval_graph.graph import (
 from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
 
 
-def test_잡담이면_smalltalk으로_직행한다() -> None:
-    assert after_route({"domain": "SMALLTALK"}) == "smalltalk"
+def test_등록된_도구_intent면_해당_노드로_직행한다() -> None:
+    assert after_route({"intent": "SMALLTALK"}) == "SMALLTALK"
 
 
-def test_문서_도메인이면_검색_경로로_간다() -> None:
-    for domain in ("HR", "TECH", "FINANCE_LEGAL", "GENERAL", None):
-        assert after_route({"domain": domain}) == "dense_retrieve"
+def test_DOC_SEARCH나_미설정이면_검색_경로로_간다() -> None:
+    for intent in ("DOC_SEARCH", None, ""):
+        assert after_route({"intent": intent}) == "dense_retrieve"
+
+
+def test_레지스트리에_없는_intent는_검색_경로로_간다() -> None:
+    assert after_route({"intent": "UNKNOWN_TOOL"}) == "dense_retrieve"
 
 
 def test_검증_통과면_finalize() -> None:

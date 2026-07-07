@@ -57,7 +57,8 @@ class RetrievalState(TypedDict):
     rewritten_query: Optional[str]               # route가 생성한 검색용 쿼리
     user_department: str
     requested_domain: Optional[str]              # 요청이 명시한 검색 도메인 한정 (빈 값=전체)
-    domain: Optional[str]                        # 라우터 분류 (SMALLTALK 분기·감사 로그용)
+    intent: Optional[str]                        # 처리 경로 (DOC_SEARCH | 도구 키). tool 필드로 강제 가능
+    domain: Optional[str]                        # (예약) 과거 라우터 분류 자리 — 현재 미사용
     dense_candidates: Optional[list[dict]]       # dense 검색 top_k개
     bm25_candidates: Optional[list[dict]]        # bm25 검색 top_k개
     retrieved_candidates: Optional[list[dict]]   # RRF 융합 후 상위 20
@@ -198,11 +199,18 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 - `user_department`는 ACL의 근거. **누락 시 가장 제한적으로 처리**:
   visibility가 `"ALL"`인 문서만 검색 대상 (DEPT_ONLY 전부 배제).
   미들웨어가 실제로 이 필드를 보내는지 확정 필요 (미확정 항목)
-- `domain`(선택): 검색 범위를 특정 도메인으로 한정. 허용값 `HR`|`TECH`|`FINANCE_LEGAL`.
+- `domain`(선택): 검색 범위를 특정 도메인으로 한정. 허용값
+  `HR`|`TECH`|`FINANCE_LEGAL`|`MANUAL`(교범)|`DIRECTIVE`(훈령).
   **빈 값·`"ALL"`·`"GENERAL"`·미지의 값이면 도메인 무관 검색** (권한 필터만 적용).
-  검색 필터에 쓰이는 도메인은 이 요청 값이 유일하며, 라우터의 LLM 분류(domain)는
-  SMALLTALK 분기·감사 로그 전용으로 검색 범위를 제한하지 않는다
-  (분류-적재 도메인 불일치로 정답 문서가 배제되는 사고 방지)
+  검색 필터에 쓰이는 도메인은 이 요청 값이 유일하다 — "교범에서만 검색" 같은
+  도메인 한정 모드는 이 필드로 구현한다 (별도 도구 불필요)
+- `tool`(선택): 처리 경로 강제 지정. 허용값 `DOC_SEARCH` + 강제 허용
+  화이트리스트(tools.FORCIBLE_TOOLS)에 등록된 도구. 지정하면 라우터의 자동
+  분류를 무시하고 해당 경로로 직행한다 (**엄격 모드 — 잡담 예외 없음**).
+  빈 값 = 자동 분류, 미지의 값·강제 비허용 도구 = 경고 로그 후 자동 분류.
+  쿼리 재작성(멀티턴 해소)은 강제 시에도 수행.
+  ※ SMALLTALK은 강제 비허용: 잡담 경로는 verify 밖이라 강제로 업무 질문이
+  들어오면 모델이 규정을 지어낼 위험 (실측) — 자동 분류로만 진입 가능
 
 **응답** (Content-Type: text/event-stream):
 
@@ -267,12 +275,13 @@ data: {"type":"done"}
 
 ```python
 class ClassifyAndRewrite(BaseModel):
-    """멀티턴 맥락 해소 + 구어체 정규화 + 도메인 분류"""
+    """멀티턴 맥락 해소 + 구어체 정규화 + 의도(경로) 분류"""
     rewritten_query: str   # 검색에 최적화된 쿼리
-    domain: str            # "HR" | "TECH" | "FINANCE_LEGAL" | "GENERAL" | "SMALLTALK"
-    # SMALLTALK: 인사/잡담 등 문서 검색이 불필요한 대화. 검색·검증을 건너뛰고
-    # smalltalk 노드가 직접 응답하며 sources는 비운다. Milvus domain 필드에는
-    # 쓰지 않는 라우팅 전용 값 (config.DOMAINS에는 포함되지 않음)
+    intent: str            # "DOC_SEARCH" | 도구 레지스트리 키 ("SMALLTALK" 등)
+    # intent는 처리 경로 선택값이다 (retrieval_graph/tools.py의 레지스트리 기반).
+    # DOC_SEARCH: 기본 검색 파이프라인. SMALLTALK: 검색·검증 없이 직접 응답.
+    # 분류 실패/미지 값은 DOC_SEARCH 폴백. 요청의 tool 필드가 intent를 선설정하면
+    # 라우터는 분류를 건너뛰고 재작성만 수행한다 (강제 모드, 잡담 예외 없음)
 
 class VerifyAnswer(BaseModel):
     """답변이 문서에 근거하는지 검증"""

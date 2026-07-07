@@ -100,7 +100,8 @@ def __post_init__(self) -> None:
 모듈 상수 두 개도 여기 있다:
 - `DOMAINS = ("HR", "TECH", "FINANCE_LEGAL", "GENERAL")` — 문서 도메인.
   Milvus `domain` 필드 값이자 라우터 분류 결과.
-- `SMALLTALK_DOMAIN = "SMALLTALK"` — 라우팅 전용 특수 분류. 문서에는 안 쓴다.
+- 처리 경로(intent) 상수·도구 레지스트리는 `retrieval_graph/tools.py`에 있다
+  (DOC_SEARCH + TOOL_NODES). 문서 도메인과 별개 축이다.
 - `CHARS_PER_TOKEN = 2.2` — 한국어 토큰 근사 상수 (청킹/이력 예산이 공유).
 
 **규칙**: 다른 모듈에서 `os.environ`을 직접 읽으면 안 된다. 환경변수를
@@ -294,10 +295,10 @@ _rebuild_bm25()                                         # ④ flush 후 BM25 전
 
 ```mermaid
 flowchart TB
-    START([START]) --> route["route<br/>질문 분석·재작성·분류<br/><i>LLM tool-call, 3단 폴백</i>"]
+    START([START]) --> route["route<br/>재작성 + intent 분류<br/><i>tool 필드로 강제 가능</i>"]
 
-    route -- "SMALLTALK" --> smalltalk["smalltalk<br/>잡담·자기소개 응답<br/><i>검색·검증 생략, sources 없음</i>"]
-    route -- "문서 질문" --> dense["dense_retrieve<br/>벡터 검색 top20<br/><i>임베딩 :8001 → Milvus, ACL은 DB 필터</i>"]
+    route -- "intent=SMALLTALK<br/>(도구 레지스트리)" --> smalltalk["SMALLTALK 노드<br/>잡담·자기소개 응답<br/><i>검색·검증 생략, sources 없음</i>"]
+    route -- "intent=DOC_SEARCH" --> dense["dense_retrieve<br/>벡터 검색 top20<br/><i>임베딩 :8001 → Milvus, ACL은 DB 필터</i>"]
 
     dense --> bm25["bm25_retrieve<br/>키워드 검색 top20<br/><i>filter_by_acl 후처리 필수</i>"]
     bm25 --> fuse["fuse<br/>RRF 융합 1/(60+순위)<br/><i>순수 연산</i>"]
@@ -767,25 +768,23 @@ ClassifyAndRewrite / VerifyAnswer가 이 패턴의 기존 예다.
 ### 패턴 B. 새 처리 경로 추가 (라우터 분기 확장) ← 대부분의 "기능 추가"
 
 행정 업무 기능처럼 "특정 유형의 요청은 다른 파이프라인으로" 보내는 경우.
-smalltalk이 이 패턴의 기존 예이므로 그대로 복제하면 된다. 예: 휴가 신청
-서식 작성을 돕는 ADMIN_FORM 기능을 추가한다면 —
+smalltalk이 이 패턴의 기존 예다. **도구 레지스트리(`retrieval_graph/tools.py`)가
+이미 구현되어 있어**, 예를 들어 휴가 신청 서식 작성을 돕는 ADMIN_FORM 기능은
+두 단계로 끝난다 —
 
-1. **분류 확장** — prompts.py 라우터 프롬프트에 분류 기준 추가,
-   router.py 허용 목록에 값 추가 (`config`에 상수 정의)
-2. **노드 작성** — `nodes/admin_form.py`: state를 받아
+1. **노드 작성** — `nodes/admin_form.py`: state를 받아
    `{"final_answer": ..., "grounded": False, "retrieved_chunks": []}` 반환.
    문서 근거를 주장하지 않는 기능이면 반드시 `grounded=False`
    (sources 게이트 유지). 문서 근거가 필요한 기능이면 검색 경로를 타게 한다
-3. **분기 연결** — graph.py `after_route`에 분기 추가:
+2. **레지스트리 등록** — tools.py에 두 줄:
    ```python
-   def after_route(state):
-       if state.get("domain") == SMALLTALK_DOMAIN: return "smalltalk"
-       if state.get("domain") == ADMIN_FORM_DOMAIN: return "admin_form"
-       return "dense_retrieve"
+   TOOL_NODES["ADMIN_FORM"] = admin_form
+   TOOL_DESCRIPTIONS["ADMIN_FORM"] = "휴가·출장 등 행정 서식 작성 요청"
    ```
-   + `add_node` / `add_conditional_edges` 매핑 / `add_edge("admin_form", END)`
-4. **주변 정리** — main.py `_status_after_node`에 진행 안내 추가,
-   state.py에 필요한 키, 유닛 테스트(가짜 LLM), interfaces.md §6·§7 갱신
+   그래프 배선(graph.py), 라우터 분류 항목(프롬프트), 강제 선택 허용값
+   (요청 tool 필드)이 전부 자동 반영된다.
+3. **주변 정리** — 유닛 테스트(가짜 LLM), interfaces.md §5·§6 허용값 갱신,
+   필요 시 main.py `_status_after_node` 진행 문구
 
 ### 패턴 C. 에이전트식 tool-use 루프 (LLM이 도구를 골라 반복 호출)
 

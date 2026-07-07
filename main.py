@@ -24,9 +24,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
+from ax_rag.retrieval_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_NODES
 from ax_rag.shared import vectorstore
 from ax_rag.shared.audit_log import log_query
-from ax_rag.shared.config import DOMAINS, SMALLTALK_DOMAIN, get_config
+from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # uvicorn으로 실행돼도 통일 포맷(시각 | 레벨 | 모듈 | 메시지)이 적용되게 임포트 시점에 설정
@@ -79,11 +80,21 @@ class QueryRequest(BaseModel):
     domain: str = Field(
         default="",
         description=(
-            "검색 도메인 한정 (선택). 허용값: HR | TECH | FINANCE_LEGAL. "
+            "검색 도메인 한정 (선택). 허용값: HR | TECH | FINANCE_LEGAL | "
+            "MANUAL(교범) | DIRECTIVE(훈령). "
             '빈 값 또는 "ALL"이면 도메인 무관 검색. "GENERAL"·미지의 값도 '
-            "도메인 무관으로 처리. 라우터의 LLM 분류는 검색 범위를 제한하지 않는다"
+            "도메인 무관으로 처리. 교범/훈령 한정 검색 모드는 이 필드로 구현한다"
         ),
-        examples=["FINANCE_LEGAL"],
+        examples=["DIRECTIVE"],
+    )
+    tool: str = Field(
+        default="",
+        description=(
+            "처리 경로 강제 지정 (선택). 허용값: DOC_SEARCH (강제 허용 도구 추가 시 확장). "
+            "지정하면 라우터의 자동 분류를 무시하고 해당 경로로 직행한다 (잡담 예외 없음). "
+            "빈 값이면 자동 분류, 미지의 값·강제 비허용 도구(SMALLTALK 등)는 무시하고 자동 분류"
+        ),
+        examples=[""],
     )
     messages: list[dict] = Field(
         default_factory=list,
@@ -95,6 +106,25 @@ class QueryRequest(BaseModel):
             ]
         ],
     )
+
+
+def normalize_tool(value: str) -> str:
+    """요청 tool 정규화: DOC_SEARCH 또는 강제 허용(FORCIBLE) 도구만 인정한다.
+
+    빈 값 / 미지의 값 / 강제 비허용 도구 → ""(라우터 자동 분류).
+    SMALLTALK 등 강제 비허용 도구를 지정하면 무시된다 — 강제 잡담 경로로
+    업무 질문이 들어오면 verify 없이 모델이 규정을 지어낼 수 있어서다 (실측).
+    """
+    normalized = (value or "").strip().upper()
+    if not normalized:
+        return ""
+    if normalized == DOC_SEARCH or normalized in FORCIBLE_TOOLS:
+        return normalized
+    if normalized in TOOL_NODES:
+        logger.warning("강제 지정이 허용되지 않는 도구: %r → 자동 분류", value)
+        return ""
+    logger.warning("미지의 tool 요청값 무시: %r → 자동 분류", value)
+    return ""
 
 
 def normalize_requested_domain(value: str) -> str:
@@ -175,9 +205,9 @@ def _status_after_node(node_name: str, merged_state: dict) -> tuple[str, str] | 
     status 이벤트의 재료다. 완료된 노드를 보고 "이제 시작되는 단계"를 알린다.
     """
     if node_name == "route":
-        if merged_state.get("domain") == SMALLTALK_DOMAIN:
+        if merged_state.get("intent") in TOOL_NODES:
             return ("generate", "답변을 생성하는 중...")
-        return ("retrieve", "사내 문서를 검색하는 중...")
+        return ("retrieve", "군 내부 문서를 검색하는 중...")
     if node_name == "fuse":
         return ("rerank", "관련 문서를 선별하는 중...")
     if node_name == "rerank":
@@ -220,13 +250,18 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
     (진행 중이던 단일 LLM 호출까지는 완료됨 — 강제 중단 불가).
     """
     user_department = request.user_department or ""
+    requested_domain = normalize_requested_domain(request.domain)
     try:
         state = {
             "question": request.question,
             "user_department": user_department,
-            "requested_domain": normalize_requested_domain(request.domain),
+            "requested_domain": requested_domain,
             "conversation_history": to_internal_history(request.messages),
         }
+        forced_intent = normalize_tool(request.tool)
+        if forced_intent:
+            # 강제 경로: 라우터가 분류를 건너뛰고 이 값을 그대로 쓴다 (엄격 모드)
+            state["intent"] = forced_intent
 
         # 그래프를 노드 단위로 진행시키며(stream) 단계마다 status 이벤트를 흘린다.
         # 동기 제너레이터의 next()만 스레드로 넘겨 이벤트 루프를 막지 않는다
@@ -258,7 +293,8 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
         log_query(
             user_department=user_department,
             question=request.question,
-            domain=result.get("domain") or "GENERAL",
+            # LLM 추측이 아니라 실제 적용된 검색 범위를 기록한다
+            domain=requested_domain or "ALL",
             sources=[s["name"] for s in sources],
             grounded=grounded,
         )
@@ -275,7 +311,7 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
             log_query(
                 user_department=user_department,
                 question=request.question,
-                domain="GENERAL",
+                domain=requested_domain or "ALL",
                 sources=[],
                 grounded=False,
             )
@@ -427,16 +463,19 @@ async def query(request: QueryRequest, http_request: Request) -> StreamingRespon
 
     - 토큰 실시간 스트리밍이 아니라 **검증 통과 후 분할 전송**이다
       (검증 실패 시 재생성되므로, 이미 보낸 텍스트를 취소할 수 없는 SSE 계약과의 정합)
-    - `domain`을 지정하면 해당 도메인 문서만 검색한다. 빈 값/"ALL"이면 전 도메인
+    - `domain`을 지정하면 해당 도메인 문서만 검색한다 (교범=MANUAL, 훈령=DIRECTIVE 등).
+      빈 값/"ALL"이면 전 도메인
+    - `tool`을 지정하면 라우터 분류 없이 해당 경로로 강제 직행한다 (잡담 예외 없음)
     - `user_department` 누락 시 visibility=ALL 문서만 검색된다
     - **생성 중지**: 별도 API 없음. 클라이언트가 SSE 연결을 중단(abort)하면
       서버가 노드 경계에서 감지해 이후 단계를 실행하지 않는다.
       미들웨어는 프론트 연결 중단 시 본 서버로의 요청도 함께 중단해야 한다
     """
     logger.info(
-        "질의 수신: dept=%s, domain=%s, 이력 %d턴, 질문=%s",
+        "질의 수신: dept=%s, domain=%s, tool=%s, 이력 %d턴, 질문=%s",
         request.user_department or "(없음)",
         request.domain or "(전체)",
+        request.tool or "(자동)",
         len(request.messages),
         request.question,
     )

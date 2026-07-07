@@ -1,12 +1,13 @@
 """retrieval_graph 전체 조립 (architecture.md §4).
 
-route ─(SMALLTALK)→ smalltalk → END
-  └─(문서 도메인)→ dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
+route ─(도구 intent)→ TOOL_NODES[intent] → END   (레지스트리 기반, tools.py)
+  └─(DOC_SEARCH)→ dense_retrieve → bm25_retrieve → fuse → rerank → generate → verify
 verify 후 조건부 분기:
 - grounded=True            → finalize (확정)
 - 실패 + 재시도 여유 있음  → increment_retry → generate 재실행
 - 실패 + 재시도 소진       → fallback (안전한 대체 답변)
 
+도구 추가는 tools.py의 TOOL_NODES 등록만으로 배선된다 (code_guide §12 패턴 B).
 dense와 bm25는 독립이라 병렬 가능하지만 구현 단순성을 위해 순차로 시작한다.
 """
 
@@ -20,11 +21,11 @@ from ax_rag.retrieval_graph.nodes.fuse import fuse
 from ax_rag.retrieval_graph.nodes.generate import generate
 from ax_rag.retrieval_graph.nodes.rerank import rerank
 from ax_rag.retrieval_graph.nodes.router import route
-from ax_rag.retrieval_graph.nodes.smalltalk import smalltalk
 from ax_rag.retrieval_graph.nodes.verify import verify
 from ax_rag.retrieval_graph.prompts import FALLBACK_ANSWER
 from ax_rag.retrieval_graph.state import RetrievalState
-from ax_rag.shared.config import SMALLTALK_DOMAIN, get_config
+from ax_rag.retrieval_graph.tools import DOC_SEARCH, TOOL_NODES
+from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -51,9 +52,10 @@ def fallback(state: RetrievalState) -> dict:
 
 
 def after_route(state: RetrievalState) -> str:
-    """route 결과 분기: 잡담이면 검색·검증 없이 smalltalk으로 직행한다."""
-    if state.get("domain") == SMALLTALK_DOMAIN:
-        return "smalltalk"
+    """route 결과 분기: 등록된 도구 intent면 해당 노드, 아니면 검색 파이프라인."""
+    intent = state.get("intent") or DOC_SEARCH
+    if intent in TOOL_NODES:
+        return intent
     return "dense_retrieve"
 
 
@@ -69,7 +71,6 @@ def after_verify(state: RetrievalState) -> str:
 def _build_graph() -> StateGraph:
     builder = StateGraph(RetrievalState)
     builder.add_node("route", route)
-    builder.add_node("smalltalk", smalltalk)
     builder.add_node("dense_retrieve", dense_retrieve)
     builder.add_node("bm25_retrieve", bm25_retrieve)
     builder.add_node("fuse", fuse)
@@ -80,13 +81,17 @@ def _build_graph() -> StateGraph:
     builder.add_node("increment_retry", increment_retry)
     builder.add_node("fallback", fallback)
 
+    # 도구 레지스트리 자동 배선: 노드 이름 = intent 값, 처리 후 바로 END
+    for intent_name, tool_node in TOOL_NODES.items():
+        builder.add_node(intent_name, tool_node)
+        builder.add_edge(intent_name, END)
+
     builder.add_edge(START, "route")
     builder.add_conditional_edges(
         "route",
         after_route,
-        {"smalltalk": "smalltalk", "dense_retrieve": "dense_retrieve"},
+        {"dense_retrieve": "dense_retrieve", **{name: name for name in TOOL_NODES}},
     )
-    builder.add_edge("smalltalk", END)
     builder.add_edge("dense_retrieve", "bm25_retrieve")
     builder.add_edge("bm25_retrieve", "fuse")
     builder.add_edge("fuse", "rerank")

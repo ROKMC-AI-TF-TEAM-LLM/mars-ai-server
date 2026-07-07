@@ -46,7 +46,7 @@ def test_route_tool_call_결과를_반영한다(monkeypatch: pytest.MonkeyPatch)
     fake = _FakeLLM(
         _tool_response(
             "ClassifyAndRewrite",
-            {"rewritten_query": "육아휴직 사용 가능 기간", "domain": "HR"},
+            {"rewritten_query": "육아휴직 사용 가능 기간", "intent": "DOC_SEARCH"},
         )
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
@@ -58,17 +58,31 @@ def test_route_tool_call_결과를_반영한다(monkeypatch: pytest.MonkeyPatch)
         }
     )
     assert result["rewritten_query"] == "육아휴직 사용 가능 기간"
-    assert result["domain"] == "HR"
+    assert result["intent"] == "DOC_SEARCH"
     assert result["retry_count"] == 0
 
 
-def test_route_미지의_도메인은_GENERAL로_강등된다(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_미지의_intent는_DOC_SEARCH로_강등된다(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(
-        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "domain": "MARKETING"})
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "intent": "MARKETING"})
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "질문"})
-    assert result["domain"] == "GENERAL"
+    assert result["intent"] == "DOC_SEARCH"
+
+
+def test_route_강제_intent는_LLM_분류를_무시한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """요청의 tool 필드가 선설정한 경로는 엄격하게 유지된다 (잡담 예외 없음)."""
+    fake = _FakeLLM(
+        _tool_response(
+            "ClassifyAndRewrite",
+            {"rewritten_query": "재작성된 질문", "intent": "DOC_SEARCH"},  # LLM은 검색이라 판단
+        )
+    )
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": "질문", "intent": "SMALLTALK"})  # 강제
+    assert result["intent"] == "SMALLTALK"  # 분류 무시, 강제값 유지
+    assert result["rewritten_query"] == "재작성된 질문"  # 재작성은 수행
 
 
 def test_route_이력은_대화가_아니라_데이터_블록으로_전달된다(
@@ -77,7 +91,7 @@ def test_route_이력은_대화가_아니라_데이터_블록으로_전달된다
     """이력을 user/assistant 메시지로 넣으면 작은 모델이 대화 이어가기로
     끌려가 tool-call을 놓친다 (실측). 시스템 + 단일 유저 메시지여야 한다."""
     fake = _FakeLLM(
-        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "domain": "GENERAL"})
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "intent": "DOC_SEARCH"})
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     router_module.route(
@@ -98,19 +112,19 @@ def test_route_이력은_대화가_아니라_데이터_블록으로_전달된다
 
 def test_route_SMALLTALK_분류를_허용한다(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(
-        _tool_response("ClassifyAndRewrite", {"rewritten_query": "인사", "domain": "SMALLTALK"})
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "인사", "intent": "SMALLTALK"})
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "내 이름은 원석이야"})
-    assert result["domain"] == "SMALLTALK"
+    assert result["intent"] == "SMALLTALK"
 
 
-def test_route_tool_call_부재_시_원본과_GENERAL_폴백(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_tool_call_부재_시_원본과_DOC_SEARCH_폴백(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(SimpleNamespace(tool_calls=[], content="그냥 텍스트 응답"))
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "육아휴직 알려줘"})
     assert result["rewritten_query"] == "육아휴직 알려줘"
-    assert result["domain"] == "GENERAL"
+    assert result["intent"] == "DOC_SEARCH"
 
 
 def test_route_예외_시에도_폴백으로_계속_진행한다(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -118,7 +132,7 @@ def test_route_예외_시에도_폴백으로_계속_진행한다(monkeypatch: py
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "육아휴직 알려줘"})
     assert result["rewritten_query"] == "육아휴직 알려줘"
-    assert result["domain"] == "GENERAL"
+    assert result["intent"] == "DOC_SEARCH"
 
 
 # ---------- generate ----------
