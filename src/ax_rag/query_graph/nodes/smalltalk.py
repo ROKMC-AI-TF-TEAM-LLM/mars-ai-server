@@ -21,18 +21,27 @@ from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
 
+# 잡담은 자연스러움이 정확성보다 중요하므로 온도를 올린다.
+# 검색·검증 경로(temperature=0, 재현성 우선)와 달리, 이 경로는 사실을
+# 주장하지 않는(grounded=False) 대화라 다양성이 이득이다
+_SMALLTALK_TEMPERATURE = 0.7
+
 
 def smalltalk(state: QueryState) -> dict:
     """가벼운 대화 응답. 실패해도 기본 인사로 폴백해 파이프라인을 죽이지 않는다."""
     config = get_config()
     history = trim_history(state.get("conversation_history") or [], config.HISTORY_MAX_TOKENS)
     try:
-        response = get_llm().invoke(
-            [
-                SystemMessage(SMALLTALK_SYSTEM_PROMPT),
-                *history_to_messages(history),
-                HumanMessage(state["question"]),
-            ]
+        response = (
+            get_llm()
+            .bind(temperature=_SMALLTALK_TEMPERATURE)
+            .invoke(
+                [
+                    SystemMessage(SMALLTALK_SYSTEM_PROMPT),
+                    *history_to_messages(history),
+                    HumanMessage(state["question"]),
+                ]
+            )
         )
         answer = str(response.content).strip() or SMALLTALK_DEFAULT_ANSWER
     except Exception:

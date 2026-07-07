@@ -8,6 +8,7 @@ from ax_rag.query_graph.nodes.discharge_days import (
     NO_DATE_ANSWER,
     build_answer,
     discharge_days,
+    is_discharge_request,
 )
 
 _TODAY = date(2026, 7, 7)
@@ -60,6 +61,21 @@ def test_이력의_사용자_발화에서_날짜를_찾는다() -> None:
 def test_챗봇_발화의_날짜는_무시한다() -> None:
     history = [{"role": "assistant", "content": "예시: 2026년 12월 1일"}]
     assert build_answer("며칠 남았어?", history, _TODAY) == NO_DATE_ANSWER
+
+
+def test_매처_전역일_언급만으로_감지한다() -> None:
+    """ "계산해줘"가 없어도 전역일+날짜 언급이면 감지 (결정적 매처)."""
+    assert is_discharge_request("내 전역일은 2026년 12월 1일이야", _TODAY)
+    assert is_discharge_request("나 12월 1일에 전역해", _TODAY)
+    assert is_discharge_request("전역까지 며칠 남았어?", _TODAY)  # 날짜 없어도 잔여일 질문
+    assert is_discharge_request("전역 디데이 알려줘", _TODAY)
+
+
+def test_매처_규정_질문은_감지하지_않는다() -> None:
+    assert not is_discharge_request("전역 절차가 어떻게 돼?", _TODAY)
+    assert not is_discharge_request("전역일 변경 신청 규정 알려줘", _TODAY)  # 날짜 없음
+    assert not is_discharge_request("연차는 며칠 남았어?", _TODAY)  # 전역 미언급
+    assert not is_discharge_request("2026년 12월 1일 시행 규정 알려줘", _TODAY)
 
 
 def test_노드_계약_grounded_False() -> None:

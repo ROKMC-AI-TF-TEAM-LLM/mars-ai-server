@@ -26,6 +26,27 @@ NO_DATE_ANSWER = (
     '예: "전역일이 2026년 12월 1일인데 며칠 남았어?"'
 )
 
+# 결정적 매처용: "며칠/얼마나 남았", "D-day/디데이" 류의 잔여일 표현
+_REMAIN_RE = re.compile(r"(며칠|얼마나?)\s*남|남았|남은\s*(날|일수|기간)|[dD]\s*-?\s*[dD]ay|디데이")
+# 전역일을 자기 것으로 언급하는 표현 ("전역 절차 알려줘" 같은 규정 질문과 구분)
+_MENTION_RE = re.compile(r"전역일|전역\s*날짜|전역해|전역함|전역이야|전역입니다|전역인데|에\s*전역")
+
+
+def is_discharge_request(question: str, today: date | None = None) -> bool:
+    """LLM 없이 판정하는 결정적 매처 (tools.TOOL_MATCHERS 등록용).
+
+    - "전역" + 잔여일 표현("며칠 남았", "D-day") → True
+    - 전역일 언급 표현 + 파싱 가능한 날짜 → True
+      ("내 전역일은 12월 1일이야"처럼 계산해 달라는 말이 없어도 동작)
+    - "전역 절차 알려줘" 같은 규정 질문 → False (문서 검색 경로 유지)
+    """
+    if "전역" not in question:
+        return False
+    if _REMAIN_RE.search(question):
+        return True
+    resolved_today = today or date.today()
+    return bool(_MENTION_RE.search(question) and _parse_discharge_date(question, resolved_today))
+
 
 def _parse_discharge_date(text: str, today: date) -> date | None:
     """텍스트에서 전역일을 추출한다. 잘못된 날짜(13월 등)는 무시."""

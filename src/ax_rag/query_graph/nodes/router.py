@@ -23,7 +23,7 @@ from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import ROUTER_SYSTEM_TEMPLATE
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
-from ax_rag.query_graph.tools import DOC_SEARCH, TOOL_DESCRIPTIONS, valid_intents
+from ax_rag.query_graph.tools import DOC_SEARCH, TOOL_DESCRIPTIONS, TOOL_MATCHERS, valid_intents
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -58,7 +58,11 @@ def _build_router_input(question: str, history: list[dict]) -> str:
 
 
 def route(state: QueryState) -> dict:
-    """질문 + 대화 이력 → rewritten_query + intent (구조화 호출 1회)."""
+    """질문 + 대화 이력 → rewritten_query + intent.
+
+    우선순위: ① 강제 지정(tool 필드) ② 결정적 매처(코드 판정, LLM 불필요)
+    ③ LLM 분류. ②에서 매치되면 LLM을 호출하지 않아 빠르고 오분류가 없다.
+    """
     config = get_config()
     question = state["question"]
     forced_intent = state.get("intent")  # 요청의 tool 필드로 선설정된 강제 경로
@@ -67,6 +71,12 @@ def route(state: QueryState) -> dict:
         "intent": forced_intent or DOC_SEARCH,
         "retry_count": state.get("retry_count") or 0,
     }
+
+    if not forced_intent:
+        for tool_name, matcher in TOOL_MATCHERS.items():
+            if matcher(question):
+                logger.info("라우팅: intent=%s (결정적 매처, LLM 미사용)", tool_name)
+                return {**fallback, "intent": tool_name}
 
     history = trim_history(state.get("conversation_history") or [], config.HISTORY_MAX_TOKENS)
     try:
