@@ -90,7 +90,8 @@ class QueryRequest(BaseModel):
     tool: str = Field(
         default="",
         description=(
-            "처리 경로 강제 지정 (선택). 허용값: DOC_SEARCH (강제 허용 도구 추가 시 확장). "
+            "처리 경로 강제 지정 (선택). 허용값은 GET /capabilities의 forcible=true 항목 "
+            "(현재: DOC_SEARCH, DISCHARGE_DAYS). "
             "지정하면 라우터의 자동 분류를 무시하고 해당 경로로 직행한다 (잡담 예외 없음). "
             "빈 값이면 자동 분류, 미지의 값·강제 비허용 도구(SMALLTALK 등)는 무시하고 자동 분류"
         ),

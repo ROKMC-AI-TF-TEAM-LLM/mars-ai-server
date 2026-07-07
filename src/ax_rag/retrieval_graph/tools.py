@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ax_rag.retrieval_graph.nodes.discharge_days import discharge_days
 from ax_rag.retrieval_graph.nodes.smalltalk import smalltalk
 
 # 기본 경로: 문서 검색 파이프라인 (도구 아님)
@@ -25,6 +26,7 @@ DOC_SEARCH = "DOC_SEARCH"
 # intent 값 → 노드 함수. 그래프 노드 이름 = intent 값
 TOOL_NODES: dict[str, Callable[[dict], dict]] = {
     "SMALLTALK": smalltalk,
+    "DISCHARGE_DAYS": discharge_days,
 }
 
 # 라우터 프롬프트에 들어가는 분류 기준 (intent 값 → 한 줄 설명)
@@ -32,14 +34,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     DOC_SEARCH: "군 내부 문서 검색이 필요한 업무·규정·행정 질문 (애매하면 이것)",
     "SMALLTALK": "인사, 자기소개, 감사, 잡담, 챗봇 자신에 대한 질문 "
     '(예: "안녕", "너 뭐 할 수 있어?")',
+    "DISCHARGE_DAYS": "전역일까지 며칠 남았는지 계산해 달라는 요청 "
+    '(예: "전역일이 2026년 12월 1일인데 며칠 남았어?", "전역 D-day 알려줘")',
 }
 
 
 # 요청의 tool 필드로 강제 지정을 허용하는 도구 화이트리스트.
 # SMALLTALK은 제외: 강제 잡담 경로로 업무 질문이 들어오면 verify 밖에서
 # 모델이 규정을 지어내는 것을 실측 — 프롬프트로 막히지 않아 구조적으로 차단한다.
-# 강제를 전제로 설계된 도구(도메인 검색 프리셋 등)만 여기에 등록할 것
-FORCIBLE_TOOLS: frozenset[str] = frozenset()
+# 강제를 전제로 설계됐거나 결정적 코드로만 답하는 도구만 여기에 등록할 것
+FORCIBLE_TOOLS: frozenset[str] = frozenset({"DISCHARGE_DAYS"})
 
 
 def valid_intents() -> tuple[str, ...]:

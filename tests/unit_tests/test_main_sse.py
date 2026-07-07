@@ -44,6 +44,7 @@ def test_도메인_정규화_허용값만_필터로_인정() -> None:
 def test_tool_정규화() -> None:
     assert main.normalize_tool("") == ""  # 자동 분류
     assert main.normalize_tool("doc_search") == "DOC_SEARCH"  # 기본 경로, 대소문자 허용
+    assert main.normalize_tool("discharge_days") == "DISCHARGE_DAYS"  # 강제 허용 도구
     assert main.normalize_tool("NO_SUCH_TOOL") == ""  # 미지 값 → 자동 분류
     # SMALLTALK은 등록된 도구지만 강제 비허용 (verify 밖 규정 창작 방지, 실측)
     assert main.normalize_tool("SMALLTALK") == ""
@@ -136,6 +137,7 @@ def test_capabilities는_레지스트리와_설정에서_생성된다() -> None:
     tools = {t["code"]: t for t in result["tools"]}
     assert tools["DOC_SEARCH"]["forcible"] is True
     assert tools["SMALLTALK"]["forcible"] is False  # 강제 비허용 (화이트리스트)
+    assert tools["DISCHARGE_DAYS"]["forcible"] is True  # 결정적 코드 도구는 강제 허용
 
 
 # ---------- GET /documents ----------
