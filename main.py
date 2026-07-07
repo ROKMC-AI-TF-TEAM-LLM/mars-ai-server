@@ -24,10 +24,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ax_rag.retrieval_graph.graph import graph
-from ax_rag.retrieval_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_NODES
+from ax_rag.retrieval_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_DESCRIPTIONS, TOOL_NODES
 from ax_rag.shared import vectorstore
 from ax_rag.shared.audit_log import log_query
-from ax_rag.shared.config import DOMAINS, get_config
+from ax_rag.shared.config import DOMAIN_LABELS, DOMAINS, get_config
 from ax_rag.shared.logging_setup import get_logger, setup_logging
 
 # uvicorn으로 실행돼도 통일 포맷(시각 | 레벨 | 모듈 | 메시지)이 적용되게 임포트 시점에 설정
@@ -325,6 +325,38 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
 def health() -> dict[str, str]:
     """서버 생존 확인. 파이프라인/모델 상태는 검사하지 않는다."""
     return {"status": "ok"}
+
+
+@app.get("/capabilities", summary="사용 가능한 domain·tool 목록")
+def capabilities() -> dict:
+    """POST /query의 domain·tool 필드에 넣을 수 있는 값 목록 (프론트 UI 데이터 소스).
+
+    - `domains`: 검색 범위 한정 값. 검색이 일어날 때만 적용된다
+      ("전체 검색"은 domain을 비우거나 "ALL")
+    - `tools`: 처리 경로. `forcible=true`인 항목만 tool 필드로 강제 지정 가능.
+      tool을 비우면 라우터가 자동 분류한다
+
+    조합 규칙: domain은 "검색하게 될 경우의 범위", tool은 "검색 여부 자체".
+    도메인 전용 모드(예: 훈령에서만)는 `tool=DOC_SEARCH` + `domain=DIRECTIVE` 조합.
+    """
+    return {
+        "domains": [{"code": code, "label": DOMAIN_LABELS.get(code, code)} for code in DOMAINS],
+        "tools": [
+            {
+                "code": DOC_SEARCH,
+                "description": TOOL_DESCRIPTIONS[DOC_SEARCH],
+                "forcible": True,
+            },
+            *[
+                {
+                    "code": name,
+                    "description": TOOL_DESCRIPTIONS.get(name, ""),
+                    "forcible": name in FORCIBLE_TOOLS,
+                }
+                for name in TOOL_NODES
+            ],
+        ],
+    }
 
 
 class DocumentItem(BaseModel):

@@ -21,6 +21,16 @@ from dotenv import load_dotenv
 # MANUAL=교범, DIRECTIVE=훈령 (도메인 한정 검색 모드용, interfaces.md §5)
 DOMAINS: tuple[str, ...] = ("HR", "TECH", "FINANCE_LEGAL", "GENERAL", "MANUAL", "DIRECTIVE")
 
+# 도메인 코드 → 화면 표시용 한글 라벨 (GET /capabilities로 프론트에 제공)
+DOMAIN_LABELS: dict[str, str] = {
+    "HR": "인사·복지",
+    "TECH": "정보화·보안",
+    "FINANCE_LEGAL": "재무·법무",
+    "GENERAL": "일반",
+    "MANUAL": "교범",
+    "DIRECTIVE": "훈령",
+}
+
 # 한국어 토큰 수 근사: 문자수 / CHARS_PER_TOKEN (L40에서 실측 보정 예정)
 CHARS_PER_TOKEN: float = 2.2
 

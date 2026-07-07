@@ -211,6 +211,12 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
   쿼리 재작성(멀티턴 해소)은 강제 시에도 수행.
   ※ SMALLTALK은 강제 비허용: 잡담 경로는 verify 밖이라 강제로 업무 질문이
   들어오면 모델이 규정을 지어낼 위험 (실측) — 자동 분류로만 진입 가능
+- **domain과 tool의 조합 규칙**: domain은 "검색하게 될 경우의 범위",
+  tool은 "검색 여부 자체". domain만 지정하고 tool을 비우면 라우터가 경로를
+  자동 판단한다 (잡담이면 SMALLTALK — 이때 domain은 무시됨). 도메인 전용
+  모드는 `tool=DOC_SEARCH` + `domain=<도메인>` 조합으로 강제한다
+- 사용 가능한 domain·tool 값 목록은 `GET /capabilities`가 제공한다
+  (코드·한글 라벨·forcible 여부 — 프론트 UI 데이터 소스)
 
 **응답** (Content-Type: text/event-stream):
 

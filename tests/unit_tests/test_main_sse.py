@@ -124,6 +124,20 @@ def test_이벤트_순서는_text_sources_done이다() -> None:
     assert payloads[-1]["items"] == [{"name": "휴가규정.pdf", "page": None}]
 
 
+# ---------- GET /capabilities ----------
+
+
+def test_capabilities는_레지스트리와_설정에서_생성된다() -> None:
+    result = main.capabilities()
+    domain_codes = [d["code"] for d in result["domains"]]
+    assert "MANUAL" in domain_codes and "DIRECTIVE" in domain_codes
+    assert all(d["label"] for d in result["domains"])  # 한글 라벨 존재
+
+    tools = {t["code"]: t for t in result["tools"]}
+    assert tools["DOC_SEARCH"]["forcible"] is True
+    assert tools["SMALLTALK"]["forcible"] is False  # 강제 비허용 (화이트리스트)
+
+
 # ---------- GET /documents ----------
 
 
