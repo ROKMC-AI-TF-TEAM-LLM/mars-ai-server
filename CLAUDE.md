@@ -7,7 +7,7 @@
 
 ## 프로젝트 개요
 
-- 목적: 사내 업무 문서 검색 챗봇 (온프레미스, 에어갭 내부망)
+- 목적: 군 내부 문서(법령·훈령·규정) 검색 챗봇 MARS (온프레미스, 에어갭 내부망)
 - 스택: LangGraph + vLLM(A.X 4.0 Light 7B) + Milvus Lite + BGE-M3 + bge-reranker-v2-m3 + bm25s/Kiwi
 - 구조: indexer_graph(문서 적재) / query_graph(질의응답) 두 그래프
 - 배포 대상: 내부망 L40 48GB 단일 서버 (모든 프로세스 동일 서버)

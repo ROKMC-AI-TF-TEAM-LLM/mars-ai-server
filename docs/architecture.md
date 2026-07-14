@@ -34,18 +34,21 @@
 ## 3. 디렉터리 구조
 
 ```
-ax-rag-multiagent/
+mars-ai-server/
 ├── langgraph.json              # 그래프 등록 매니페스트
 ├── pyproject.toml              # src 레이아웃 패키징 (requires-python==3.11.*)
 ├── requirements.txt            # 프로덕션 의존성, 전부 == 고정
 ├── requirements-eval.txt       # 평가 전용 (ragas, datasets), 별도 설치
 ├── Makefile                    # test / lint / format / dev
 ├── README.md
-├── .env.example
-├── main.py                     # 사내 인트라넷 연동용 FastAPI 래퍼
+├── .env.example                # L40 운영용 / .env.dev.example: 개발 노트북용
+├── main.py                     # 미들웨어 연동 FastAPI 래퍼 (SSE, 문서 관리 API)
+├── docs/                       # architecture / interfaces / roadmap / code_guide / deploy_l40
 ├── eval_sets/
 │   └── hr_sample.jsonl         # 평가용 질문-정답 쌍
+├── sample_docs/                # 개발용 한국어 샘플 문서 (훈령·법령 PDF 등)
 ├── scripts/
+│   ├── dev_setup.ps1           # 개발 노트북 부트스트랩 (venv·모델·llama.cpp·Milvus)
 │   ├── bulk_ingest.py          # 여러 문서를 순회하며 indexer_graph 호출
 │   ├── reindex_document.py     # 문서 갱신: 기존 청크 삭제 후 재적재 + BM25 재빌드
 │   └── evaluate_rag.py         # RAGAS 기반 성능 평가
@@ -53,23 +56,32 @@ ax-rag-multiagent/
 │   ├── shared/
 │   │   ├── config.py           # 환경변수 로딩, frozen dataclass, get_config()
 │   │   ├── llm_client.py       # get_llm() 싱글턴 (lru_cache)
-│   │   ├── vectorstore.py      # Milvus Lite 자식 청크 컬렉션
+│   │   ├── vectorstore.py      # Milvus 자식 청크 컬렉션 (+문서 인벤토리)
 │   │   ├── parent_store.py     # 부모 청크 컬렉션 (인덱스 없음)
 │   │   ├── bm25_store.py       # Kiwi 토큰화 + bm25s 인덱스
-│   │   └── audit_log.py        # 질의 감사 로그 (JSONL append)
+│   │   ├── audit_log.py        # 질의 감사 로그 (JSONL append)
+│   │   ├── health.py           # 딥 헬스체크 (의존 서비스 4종 집계)
+│   │   ├── ingest_jobs.py      # 적재 작업 인메모리 레지스트리 (202 백그라운드)
+│   │   └── logging_setup.py    # 통일 포맷 로거 팩토리
 │   ├── indexer_graph/
 │   │   ├── state.py            # IndexState
 │   │   ├── chunking.py         # 구조 인식 분할 + 부모-자식 청킹
+│   │   ├── loaders.py          # 확장자별 로더 (.md/.txt/.pdf)
+│   │   ├── ingest.py           # 적재/삭제 공용 로직 + 직렬화 잠금
 │   │   └── graph.py            # chunk -> embed_and_upsert -> END
 │   └── query_graph/
 │       ├── state.py            # QueryState
-│       ├── prompts.py          # 라우터/생성/검증 시스템 프롬프트
+│       ├── prompts.py          # 라우터/생성/검증/잡담 시스템 프롬프트
+│       ├── tools.py            # 도구 레지스트리 (노드·설명·매처·상태문구·단독전용)
+│       ├── tool_fallback.py    # 구조화 호출 3단 안전망 (예시 기반 재시도)
 │       ├── acl.py              # ACL 필터 (표현식 + BM25 후처리)
 │       ├── fusion.py           # RRF 융합
 │       ├── budget.py           # 컨텍스트 토큰 예산 계산 + 대화 이력 절삭
-│       ├── graph.py            # StateGraph 조립
+│       ├── graph.py            # StateGraph 조립 (plan-then-execute 배선·합성)
 │       └── nodes/
-│           ├── router.py       # ClassifyAndRewrite tool-call
+│           ├── router.py       # ClassifyAndRewrite: 재작성 + 계획(intents) 수립
+│           ├── smalltalk.py    # 잡담 응답 (단독 전용 도구)
+│           ├── discharge_days.py  # 전역일 D-day 계산 (결정적 코드 도구, 예시)
 │           ├── dense_retrieve.py
 │           ├── bm25_retrieve.py
 │           ├── fuse.py
@@ -77,9 +89,11 @@ ax-rag-multiagent/
 │           ├── generate.py
 │           └── verify.py       # LLM 검증 + 규칙 기반 검증 이중화
 ├── serving/
-│   ├── start_vllm.sh
+│   ├── start_vllm.sh           # L40 운영 서빙
+│   ├── start_llm_dev.ps1       # 개발 노트북 llama.cpp 서빙 (vLLM 대체)
 │   ├── embedding_server.py
-│   └── reranker_server.py
+│   ├── reranker_server.py
+│   └── milvus-dev/             # 개발용 Docker Milvus 설정
 └── tests/
     ├── unit_tests/
     └── integration_tests/
@@ -113,12 +127,13 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
    요청의 tool 필드가 경로를 강제하면 계획을 그 경로 하나로 고정하고
    재작성만 수행한다. 합성은 verify 뒤 코드 조립만 허용 (fail-closed)
 2. **dense_retrieve** — rewritten_query 임베딩 → Milvus Lite 검색.
-   ACL(visibility/부서)은 Milvus 스칼라 필터로 적용. top_k=20.
+   ACL(visibility/부서)은 Milvus 스칼라 필터로 적용. top_k=SEARCH_TOP_K(.env, 기본 20).
    도메인 한정은 **요청이 명시한 경우(requested_domain)에만** 적용하며,
    라우터의 LLM 분류는 검색 범위를 제한하지 않는다
-3. **bm25_retrieve** — Kiwi 토큰화 → bm25s 검색 → **ACL 후처리 필터 필수** → top_k=20.
+3. **bm25_retrieve** — Kiwi 토큰화 → bm25s 검색(3배 오버샘플) →
+   **ACL 후처리 필터 필수** → top_k=SEARCH_TOP_K.
    도메인 한정 정책은 dense와 동일. 인덱스 없으면 빈 리스트 반환 (dense 단독 폴백)
-4. **fuse** — RRF 융합 (k=60 시작, 평가로 조정) → 상위 20
+4. **fuse** — RRF 융합 (k=60 시작, 평가로 조정) → 상위 RERANK_TOP_K(기본 20)
 5. **rerank** — 리랭커 서버 호출 → top_n=5 확정 → 그 5개만 부모 청크로 치환
 6. **generate** — 근거 기반 답변 생성. 프롬프트에는 원본 질문과 rewritten_query를
    **둘 다** 포함시켜 검색-생성 미스매치를 모델이 감지할 여지를 남긴다

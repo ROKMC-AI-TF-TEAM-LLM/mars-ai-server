@@ -1,6 +1,7 @@
-# mars-ai-server — A.X 내부 문서 RAG + 멀티 에이전트
+# mars-ai-server — MARS: 군 문서 RAG + 멀티 에이전트
 
-사내 업무 문서 검색 챗봇 (온프레미스, 에어갭 내부망).
+군 내부 문서(법령·훈령·규정) 검색 챗봇 **MARS**(Marine Artificial intelligence
+Retrieval System). 온프레미스, 에어갭 내부망.
 LangGraph + vLLM(A.X 4.0 Light) + Milvus Lite + BGE-M3 + bge-reranker-v2-m3 + bm25s/Kiwi.
 
 - 설계: [docs/architecture.md](docs/architecture.md)

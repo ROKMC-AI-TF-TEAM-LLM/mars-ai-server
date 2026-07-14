@@ -402,10 +402,12 @@ AX_API_KEY=EMPTY
 # --- 임베딩 서버 (BGE-M3) ---
 EMBEDDING_SERVER_URL=http://localhost:8001/embed
 EMBEDDING_DEVICE=cuda
+EMBEDDING_MODEL_PATH=./models/bge-m3            # 로컬 경로만 (Hub ID 금지)
 
 # --- 리랭커 서버 (bge-reranker-v2-m3) ---
 RERANKER_SERVER_URL=http://localhost:8002/rerank
 RERANKER_DEVICE=cuda
+RERANKER_MODEL_PATH=./models/bge-reranker-v2-m3 # 로컬 경로만 (Hub ID 금지)
 RERANK_TOP_K=20
 RERANK_TOP_N=5
 
@@ -428,6 +430,15 @@ AUDIT_LOG_PATH=./data/audit_log.jsonl
 
 # --- 문서 업로드 저장 경로 (POST /documents 원본 보관) ---
 UPLOAD_DIR=./data/uploads
+
+# --- 외부 서비스 호출 공통 timeout(초). CPU 임베딩 등 느린 환경은 늘린다 ---
+HTTP_TIMEOUT_SECONDS=60
+
+# --- 로그 레벨 (DEBUG/INFO/WARNING/ERROR) ---
+LOG_LEVEL=INFO
+
+# --- SSE text 이벤트 간 전송 간격(ms), 체감 스트리밍(타자기 효과)용 ---
+STREAM_TEXT_INTERVAL_MS=200
 
 # --- 오프라인/에어갭 필수 ---
 HF_HUB_OFFLINE=1
