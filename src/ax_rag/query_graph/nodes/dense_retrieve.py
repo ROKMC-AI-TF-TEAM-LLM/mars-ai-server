@@ -18,9 +18,6 @@ from ax_rag.shared.vectorstore import get_client, get_collection
 
 logger = get_logger(__name__)
 
-# 검색 깊이 (architecture.md §4: dense top_k=20)
-TOP_K = 20
-
 # 후속 노드(융합/리랭크/부모 치환/감사 로그)가 쓰는 필드
 _OUTPUT_FIELDS = [
     "text",
@@ -50,7 +47,7 @@ def _search(embedding: list[float], expr: str) -> list[dict]:
         get_collection(),
         data=[embedding],
         filter=expr,
-        limit=TOP_K,
+        limit=get_config().SEARCH_TOP_K,
         output_fields=_OUTPUT_FIELDS,
     )
     candidates: list[dict] = []
@@ -68,7 +65,7 @@ def _search(embedding: list[float], expr: str) -> list[dict]:
 
 
 def dense_retrieve(state: QueryState) -> dict:
-    """벡터 검색 top_k=20. 보안 필터 항상 적용, 도메인은 요청 명시 시에만 한정."""
+    """벡터 검색 (top_k=SEARCH_TOP_K). 보안 필터 항상 적용, 도메인은 요청 명시 시에만 한정."""
     query = state.get("rewritten_query") or state["question"]
     # 요청이 도메인을 안 정했으면 GENERAL(=도메인 절 없음)로 전 도메인 검색
     scope = state.get("requested_domain") or "GENERAL"

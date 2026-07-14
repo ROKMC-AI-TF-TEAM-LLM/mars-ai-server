@@ -66,6 +66,9 @@ class Config:
     # --- BM25 키워드 검색 ---
     BM25_INDEX_PATH: str
 
+    # --- 하이브리드 검색 (dense/bm25 각각의 검색 깊이, architecture.md §4) ---
+    SEARCH_TOP_K: int
+
     # --- 파이프라인 ---
     MAX_VERIFY_RETRY: int
     HISTORY_MAX_TOKENS: int
@@ -133,6 +136,7 @@ def get_config() -> Config:
         MILVUS_LITE_PATH=_env_str("MILVUS_LITE_PATH", "./data/milvus_ax.db"),
         MILVUS_COLLECTION=_env_str("MILVUS_COLLECTION", "company_docs"),
         BM25_INDEX_PATH=_env_str("BM25_INDEX_PATH", "./data/bm25_index"),
+        SEARCH_TOP_K=_env_int("SEARCH_TOP_K", 20),
         MAX_VERIFY_RETRY=_env_int("MAX_VERIFY_RETRY", 1),
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),

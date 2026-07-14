@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from ax_rag.query_graph.nodes import rerank as rerank_module
+from ax_rag.shared.config import get_config
 
 _PARENTS = {
     "p1": "부모 텍스트 1: 육아휴직은 최대 1년까지 사용할 수 있다. (전후 맥락 포함)",
@@ -104,4 +105,5 @@ def test_리랭커_호출에_timeout이_지정된다(fake_services: dict) -> Non
             "retrieved_candidates": [_candidate("c1", "p1")],
         }
     )
-    assert fake_services["timeout"] == 60.0
+    # 값 자체는 .env가 덮어쓸 수 있으므로 설정과 일치하는지만 검증한다
+    assert fake_services["timeout"] == get_config().HTTP_TIMEOUT_SECONDS

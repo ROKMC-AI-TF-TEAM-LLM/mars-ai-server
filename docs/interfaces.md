@@ -397,6 +397,9 @@ MILVUS_COLLECTION=company_docs
 # --- BM25 키워드 검색 ---
 BM25_INDEX_PATH=./data/bm25_index
 
+# --- 하이브리드 검색 (dense/bm25 각각의 검색 깊이) ---
+SEARCH_TOP_K=20
+
 # --- 파이프라인 ---
 MAX_VERIFY_RETRY=1
 HISTORY_MAX_TOKENS=1500

@@ -31,12 +31,15 @@ def test_설정은_불변이다(config: Config) -> None:
 
 
 def test_수치_설정_타입과_기본값(config: Config) -> None:
+    assert isinstance(config.SEARCH_TOP_K, int)
     assert isinstance(config.RERANK_TOP_K, int)
     assert isinstance(config.RERANK_TOP_N, int)
+    assert config.SEARCH_TOP_K > 0
     assert config.RERANK_TOP_N <= config.RERANK_TOP_K
     assert config.MAX_VERIFY_RETRY == 1
     assert config.HISTORY_MAX_TOKENS == 1500
-    assert config.HTTP_TIMEOUT_SECONDS == 60.0
+    # 정확한 값은 .env가 덮어쓸 수 있으므로(개발 노트북 완화 등) 양수만 보장한다
+    assert config.HTTP_TIMEOUT_SECONDS > 0
 
 
 def test_도메인_분류_체계() -> None:

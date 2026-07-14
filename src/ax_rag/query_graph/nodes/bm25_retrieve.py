@@ -10,28 +10,27 @@ from __future__ import annotations
 from ax_rag.query_graph.acl import filter_by_acl
 from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.bm25_store import bm25_search
+from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
-
-# 검색 깊이 (architecture.md §4: bm25 top_k=20)
-TOP_K = 20
 
 # ACL 필터로 걸러질 분량을 감안해 더 깊이 검색한 뒤 필터 후 top_k로 자른다
 _OVERSAMPLE_FACTOR = 3
 
 
 def bm25_retrieve(state: QueryState) -> dict:
-    """BM25 검색 → filter_by_acl 후처리(우회 금지) → top_k=20."""
+    """BM25 검색 → filter_by_acl 후처리(우회 금지) → top_k=SEARCH_TOP_K."""
     query = state.get("rewritten_query") or state["question"]
     scope = state.get("requested_domain") or "GENERAL"  # GENERAL=도메인 제한 없음
+    top_k = get_config().SEARCH_TOP_K
 
-    raw_results = bm25_search(query, top_k=TOP_K * _OVERSAMPLE_FACTOR)
+    raw_results = bm25_search(query, top_k=top_k * _OVERSAMPLE_FACTOR)
     if not raw_results:
         logger.info("bm25 결과 없음 (인덱스 부재 또는 무매칭) → dense 단독 폴백")
         return {"bm25_candidates": []}
 
     filtered = filter_by_acl(raw_results, scope, state.get("user_department", ""))
-    candidates = filtered[:TOP_K]
+    candidates = filtered[:top_k]
     logger.info("bm25 검색: 원시 %d건 → ACL 후 %d건", len(raw_results), len(candidates))
     return {"bm25_candidates": candidates}
