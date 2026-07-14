@@ -44,16 +44,18 @@ Copy-Item models, tools -Destination D:\backup\ -Recurse   # 선택: 모델 9GB 
 # 0) 시스템 요구: Python 3.11.x, git, Docker Desktop (설치 후 실행 상태)
 git clone <저장소 URL> mars-ai-server
 cd mars-ai-server
-powershell -File scripts\dev_setup.ps1          # venv+의존성, .env, 모델(~9GB), llama.cpp, Milvus 컨테이너
+# ★ -ExecutionPolicy Bypass 필수: Windows 기본 정책(Restricted)에서는 .ps1 실행이 차단된다
+powershell -ExecutionPolicy Bypass -File scripts\dev_setup.ps1          # venv+의존성, .env, 모델(~9GB), llama.cpp, Milvus 컨테이너
 # 모델 백업을 복원한 경우: models/, tools/ 붙여넣은 뒤
-powershell -File scripts\dev_setup.ps1 -SkipModels
+powershell -ExecutionPolicy Bypass -File scripts\dev_setup.ps1 -SkipModels
+# Docker Desktop을 아직 설치 못 했다면: -SkipDocker로 나머지만 먼저 셋업
 ```
 
 ### 서버 기동 (순서대로, 각각 별도 터미널)
 
 ```powershell
 docker start ax-milvus-dev                                                        # 벡터DB :19530 (셋업 직후엔 이미 실행 중)
-powershell -File serving\start_llm_dev.ps1                                        # 1) LLM :8000
+powershell -ExecutionPolicy Bypass -File serving\start_llm_dev.ps1                # 1) LLM :8000
 $env:PYTHONPATH="src"; .\.venv\Scripts\python.exe serving\embedding_server.py     # 2) 임베딩 :8001
 $env:PYTHONPATH="src"; .\.venv\Scripts\python.exe serving\reranker_server.py      # 3) 리랭커 :8002
 $env:PYTHONPATH="src"; .\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 9000   # 4) API :9000
@@ -84,7 +86,7 @@ Windows에서는 vLLM 실행이 불가하므로, 프롬프트/로직 검증용�
 
 1. `models/A.X-4.0-Light-Q4_K_M.gguf` (GGUF Q4_K_M) 준비
 2. llama.cpp 릴리스 바이너리를 `tools/llama.cpp/`에 압축 해제
-3. `powershell -File serving\start_llm_dev.ps1` → 8000 포트, `.env` 수정 불필요
+3. `powershell -ExecutionPolicy Bypass -File serving\start_llm_dev.ps1` → 8000 포트, `.env` 수정 불필요
 
 tool-calling 동작은 vLLM 파서와 다를 수 있으므로 노트북 통과는 잠정 통과로
 취급한다 (roadmap.md 4단계 주의사항).

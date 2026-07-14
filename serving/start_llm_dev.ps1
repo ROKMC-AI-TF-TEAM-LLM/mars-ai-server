@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 # 개발 노트북 전용 (Windows + RTX 4050): llama.cpp로 A.X 4.0 Light GGUF를
 # vLLM 대신 8000 포트에 OpenAI 호환으로 서빙한다.
 #
@@ -7,7 +7,8 @@
 # - --jinja: 모델 내장 chat template 사용 → hermes 계열 tool-calling 지원
 #   (주의: vLLM 파서와 동작이 다를 수 있음. tool-calling 최종 검증은 L40에서)
 #
-# 사용: powershell -File serving\start_llm_dev.ps1
+# 사용: powershell -ExecutionPolicy Bypass -File serving\start_llm_dev.ps1
+#       (기본 실행 정책(Restricted)에서는 -ExecutionPolicy Bypass 없이 실행되지 않는다)
 # =====================================================================
 param(
     # RTX 4050 6GB 기준 안전값. VRAM 여유가 확인되면 99까지 올려 전체 오프로드
