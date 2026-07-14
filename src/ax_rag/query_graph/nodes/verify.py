@@ -10,6 +10,7 @@ fail-closed: 어느 단계든 판정 불가(빈 답변, tool_call 부재, 예외
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
@@ -46,6 +47,10 @@ class VerifyAnswer(BaseModel):
 
     grounded: bool
     reason: str
+
+    # JSON 강제 재시도용 형식 예시 (tool_fallback._retry_example).
+    # grounded 예시가 False인 이유: 앵무새 복사돼도 fail-closed로 떨어진다
+    RETRY_EXAMPLE: ClassVar[dict] = {"grounded": False, "reason": "<판단 근거 한 문장>"}
 
 
 # 수치(날짜 구성 요소 포함): 1,000 / 15 / 2026 / 3.5 등

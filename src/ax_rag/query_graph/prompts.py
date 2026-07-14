@@ -12,6 +12,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 # (tools.TOOL_DESCRIPTIONS)에서 생성해 채운다 — 프롬프트와 코드가 어긋나지 않도록
 ROUTER_SYSTEM_TEMPLATE = """너는 군 문서 검색 시스템의 라우터다. \
 사용자의 마지막 질문과 대화 이력을 보고 ClassifyAndRewrite 도구를 반드시 호출한다.
+너는 질문에 답하는 역할이 아니다 — 질문 내용에 절대 답하지 말고, \
+분류와 재작성만 수행한다.
 
 - rewritten_query: 대화 이력의 맥락을 반영해 대명사와 생략("그거", "그건 얼마나")을 \
 구체적인 대상으로 해소하고, 구어체를 검색에 적합한 표준 표현으로 정규화한 독립형 검색 쿼리. \

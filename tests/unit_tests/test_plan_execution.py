@@ -167,6 +167,15 @@ def test_route_단수형_intent_응답도_수용한다(monkeypatch: pytest.Monke
     assert result["intents"] == ["SMALLTALK"]
 
 
+def test_route_자리표시_재작성은_원본_질문으로_대체한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """재시도 예시의 자리표시(<...>)를 그대로 복사한 응답 방어."""
+    fake = _FakeLLM(_classify_response("<검색용으로 재작성한 질문>", ["DOC_SEARCH"]))
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": "육아휴직 얼마나 써?"})
+    assert result["rewritten_query"] == "육아휴직 얼마나 써?"
+    assert result["intents"] == ["DOC_SEARCH"]
+
+
 # ---------- graph: 실행 큐 분기와 도구 스텝 ----------
 
 
