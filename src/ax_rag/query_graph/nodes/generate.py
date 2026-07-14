@@ -11,16 +11,31 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import (
     GENERATE_SYSTEM_PROMPT,
+    GENERATE_TOOL_HANDLED_TEMPLATE,
     GENERATE_USER_TEMPLATE,
     format_documents,
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
+from ax_rag.query_graph.tools import TOOL_DESCRIPTIONS
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+
+def _tool_handled_note(state: QueryState) -> str:
+    """복합 계획에서 도구가 이미 처리한 요청 유형을 안내하는 꼬리 프롬프트.
+
+    도구 답변의 수치는 넣지 않는다 — 초안에 섞이면 rule_based_verify가
+    "근거에 없는 수치"로 오탐한다. 유형 설명(TOOL_DESCRIPTIONS)만 전달한다.
+    """
+    handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
+    if not handled:
+        return ""
+    lines = "\n".join(f"- {TOOL_DESCRIPTIONS.get(name, name)}" for name in handled if name)
+    return GENERATE_TOOL_HANDLED_TEMPLATE.format(handled=lines)
 
 
 def generate(state: QueryState) -> dict:
@@ -37,7 +52,7 @@ def generate(state: QueryState) -> dict:
         documents=format_documents(chunks),
         question=state["question"],
         rewritten_query=state.get("rewritten_query") or state["question"],
-    )
+    ) + _tool_handled_note(state)
     response = get_llm().invoke(
         [
             SystemMessage(GENERATE_SYSTEM_PROMPT),

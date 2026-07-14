@@ -16,15 +16,29 @@ from pydantic import BaseModel
 
 from ax_rag.query_graph.prompts import (
     VERIFY_SYSTEM_PROMPT,
+    VERIFY_TOOL_HANDLED_TEMPLATE,
     VERIFY_USER_TEMPLATE,
     format_documents,
 )
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
+from ax_rag.query_graph.tools import TOOL_DESCRIPTIONS
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+
+def _tool_handled_note(state: QueryState) -> str:
+    """복합 계획에서 도구가 처리한 요청 유형을 verify 판정 범위에서 제외하는 안내.
+
+    도구 답변의 수치는 넣지 않는다 (검증 기준 오염 방지) — 유형 설명만 전달한다.
+    """
+    handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
+    if not handled:
+        return ""
+    lines = "\n".join(f"- {TOOL_DESCRIPTIONS.get(name, name)}" for name in handled if name)
+    return VERIFY_TOOL_HANDLED_TEMPLATE.format(handled=lines)
 
 
 class VerifyAnswer(BaseModel):
@@ -95,6 +109,7 @@ def verify(state: QueryState) -> dict:
                         question=state["question"],
                         draft_answer=draft,
                     )
+                    + _tool_handled_note(state)
                 ),
             ],
             VerifyAnswer,

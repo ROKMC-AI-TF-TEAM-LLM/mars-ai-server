@@ -28,7 +28,16 @@ from pydantic import BaseModel, Field
 from ax_rag.indexer_graph import ingest
 from ax_rag.indexer_graph.loaders import SUPPORTED_SUFFIXES
 from ax_rag.query_graph.graph import graph
-from ax_rag.query_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_DESCRIPTIONS, TOOL_NODES
+from ax_rag.query_graph.tools import (
+    DEFAULT_TOOL_STATUS_MESSAGE,
+    DOC_SEARCH,
+    FORCIBLE_TOOLS,
+    TERMINAL_ONLY_TOOLS,
+    TOOL_DESCRIPTIONS,
+    TOOL_NODES,
+    TOOL_STATUS_MESSAGES,
+    execution_queue,
+)
 from ax_rag.shared import vectorstore
 from ax_rag.shared.audit_log import log_query
 from ax_rag.shared.config import DOMAIN_LABELS, DOMAINS, get_config
@@ -205,6 +214,32 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
     yield sse_event({"type": "done"})
 
 
+def _next_stage_status(merged_state: dict) -> tuple[str, str] | None:
+    """실행 큐(pending_intents)의 선두를 보고 다음 단계 안내를 만든다.
+
+    - 다음이 도구 → stage="tool" + 도구별 문구 (TOOL_STATUS_MESSAGES, 레지스트리 기반)
+    - 다음이 DOC_SEARCH → stage="retrieve" (문서 검색 시작)
+    - 큐 소진 → None (finalize는 즉시 끝나므로 안내 불필요)
+    """
+    pending = merged_state.get("pending_intents")
+    if pending is None:  # 구형 상태: 계획 또는 대표 intent에서 재구성 (방어적)
+        plan = merged_state.get("intents")
+        if plan:
+            pending = execution_queue(list(plan))
+        else:
+            intent = merged_state.get("intent")
+            pending = [intent] if intent else [DOC_SEARCH]
+    if not pending:
+        return None
+    head = pending[0]
+    if head == DOC_SEARCH or head not in TOOL_NODES:
+        return ("retrieve", "군 내부 문서를 검색하는 중...")
+    if head in TERMINAL_ONLY_TOOLS:
+        # 단독 전용 도구(SMALLTALK)는 곧바로 답변 생성이다
+        return ("generate", "답변을 생성하는 중...")
+    return ("tool", TOOL_STATUS_MESSAGES.get(head, DEFAULT_TOOL_STATUS_MESSAGE))
+
+
 def _status_after_node(node_name: str, merged_state: dict) -> tuple[str, str] | None:
     """그래프 노드 완료 시 다음 단계 안내 (stage, message). 안내가 없는 노드는 None.
 
@@ -212,9 +247,10 @@ def _status_after_node(node_name: str, merged_state: dict) -> tuple[str, str] | 
     status 이벤트의 재료다. 완료된 노드를 보고 "이제 시작되는 단계"를 알린다.
     """
     if node_name == "route":
-        if merged_state.get("intent") in TOOL_NODES:
-            return ("generate", "답변을 생성하는 중...")
-        return ("retrieve", "군 내부 문서를 검색하는 중...")
+        return _next_stage_status(merged_state)
+    if node_name in TOOL_NODES and node_name not in TERMINAL_ONLY_TOOLS:
+        # 계획 실행 중인 도구 완료 → 남은 큐 기준으로 다음 단계 안내
+        return _next_stage_status(merged_state)
     if node_name == "fuse":
         return ("rerank", "관련 문서를 선별하는 중...")
     if node_name == "rerank":
@@ -272,7 +308,13 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
 
         # 그래프를 노드 단위로 진행시키며(stream) 단계마다 status 이벤트를 흘린다.
         # 동기 제너레이터의 next()만 스레드로 넘겨 이벤트 루프를 막지 않는다
-        yield sse_event({"type": "status", "stage": "route", "message": "질문을 분석하는 중..."})
+        yield sse_event(
+            {
+                "type": "status",
+                "stage": "route",
+                "message": "질문을 분석하고 처리 계획을 수립하는 중...",
+            }
+        )
         updates_stream = graph.stream(state, stream_mode="updates")
         sentinel = object()
         result: dict = dict(state)
@@ -753,8 +795,9 @@ _QUERY_RESPONSES = {
         "description": (
             "SSE 스트림 (`data: {JSON}\\n\\n` 프레임). 이벤트 순서:\n\n"
             '1. `{"type": "status", "stage": str, "message": str}` — 진행 상태 안내, '
-            '0회 이상 (예: "사내 문서를 검색하는 중..."). stage 값: '
-            "route | retrieve | rerank | generate | verify\n"
+            '0회 이상 (예: "군 내부 문서를 검색하는 중..."). stage 값: '
+            "route(질문 분석·계획 수립) | tool(도구 실행, 도구별 문구) | "
+            "retrieve | rerank | generate | verify\n"
             '2. `{"type": "text", "content": str}` — 답변 조각, N회 '
             "(문장 단위, STREAM_TEXT_INTERVAL_MS 간격)\n"
             '3. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '

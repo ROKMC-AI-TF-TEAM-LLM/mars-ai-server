@@ -6,9 +6,12 @@
 2) 아래 TOOL_NODES에 노드 등록 + TOOL_DESCRIPTIONS에 분류 기준 한 줄
 3) (선택) 결정적으로 감지 가능한 도구면 TOOL_MATCHERS에 매처 등록 —
    LLM 분류보다 먼저 코드로 판정해 오분류·지연을 없앤다
+4) (선택) 복합 계획에 섞이면 안 되는 도구면 TERMINAL_ONLY_TOOLS에 추가
+5) (선택) 실행 중 프론트에 보여줄 문구를 TOOL_STATUS_MESSAGES에 등록
+   (미등록이면 기본 문구 "요청을 처리하는 중...")
 
-이것만으로 그래프 배선(graph.py), 라우터 분류 항목(router.py),
-강제 선택 허용값(main.normalize_tool)이 전부 자동 반영된다.
+이것만으로 그래프 배선(graph.py — 복합 계획 편입 포함), 라우터 분류
+항목(router.py), 강제 선택 허용값(main.normalize_tool)이 전부 자동 반영된다.
 
 DOC_SEARCH는 도구가 아니라 기본 파이프라인(검색→생성→검증)이므로
 TOOL_NODES에 넣지 않는다. 도메인 한정 검색(교범/훈령 모드)도 도구가 아니라
@@ -56,6 +59,31 @@ TOOL_MATCHERS: dict[str, Callable[[str], bool]] = {
 FORCIBLE_TOOLS: frozenset[str] = frozenset({"DISCHARGE_DAYS"})
 
 
+# 도구 실행 직전 SSE status로 내보내는 진행 안내 문구 (main._status_after_node).
+# 미등록 도구는 DEFAULT_TOOL_STATUS_MESSAGE를 쓴다
+TOOL_STATUS_MESSAGES: dict[str, str] = {
+    "DISCHARGE_DAYS": "전역일을 계산하는 중...",
+}
+DEFAULT_TOOL_STATUS_MESSAGE = "요청을 처리하는 중..."
+
+
+# 복합 계획(여러 경로 합성)에 섞일 수 없는 단독 전용 도구.
+# SMALLTALK은 verify 밖 자유 생성이라 업무 답변과 한 응답으로 합성하지 않는다
+# — 질문 전체가 잡담일 때만 단독 경로로 쓰고, 섞이면 라우터 정규화가 제거한다
+TERMINAL_ONLY_TOOLS: frozenset[str] = frozenset({"SMALLTALK"})
+
+
 def valid_intents() -> tuple[str, ...]:
     """허용되는 intent 값 전체 (기본 경로 + 등록된 도구)."""
     return (DOC_SEARCH, *TOOL_NODES)
+
+
+def execution_queue(plan: list[str]) -> list[str]:
+    """계획(intents)을 실행 순서로 바꾼다: 도구 먼저(계획 순서 유지), DOC_SEARCH는 마지막.
+
+    도구는 검색과 독립이고 즉시 끝나므로 앞에 두고, 검색 파이프라인은
+    generate/verify로 이어지는 마지막 구간에 둔다. 최종 답변의 합성 순서는
+    실행 순서가 아니라 계획(intents) 순서를 따른다 (graph._compose_final).
+    """
+    tools = [name for name in plan if name != DOC_SEARCH]
+    return [*tools, DOC_SEARCH] if DOC_SEARCH in plan else tools

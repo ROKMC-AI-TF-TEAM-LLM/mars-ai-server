@@ -43,11 +43,14 @@ def extract_tool_args(response: Any, schema: type[BaseModel]) -> dict | None:
     content = str(getattr(response, "content", "") or "")
     match = _JSON_BLOCK_RE.search(content)
     if not match:
+        if content:
+            # 원문 일부를 남겨 실패 형태를 진단할 수 있게 한다 (L40 성공률 측정 재료)
+            logger.warning("본문에 JSON 블록이 없다 (%s): %.200s", schema.__name__, content)
         return None
     try:
         parsed = schema.model_validate_json(match.group(0))
     except ValidationError:
-        logger.warning("본문 JSON이 %s 스키마에 안 맞는다", schema.__name__)
+        logger.warning("본문 JSON이 %s 스키마에 안 맞는다: %.200s", schema.__name__, match.group(0))
         return None
     logger.info("tool_call 부재 → 본문 JSON 폴백 파싱 성공 (%s)", schema.__name__)
     return parsed.model_dump()

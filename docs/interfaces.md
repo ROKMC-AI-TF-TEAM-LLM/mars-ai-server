@@ -57,7 +57,10 @@ class QueryState(TypedDict):
     rewritten_query: Optional[str]               # route가 생성한 검색용 쿼리
     user_department: str
     requested_domain: Optional[str]              # 요청이 명시한 검색 도메인 한정 (빈 값=전체)
-    intent: Optional[str]                        # 처리 경로 (DOC_SEARCH | 도구 키). tool 필드로 강제 가능
+    intent: Optional[str]                        # 처리 경로 대표값(계획 첫 항목). tool 필드로 강제 가능
+    intents: Optional[list[str]]                 # 처리 계획 (복수 가능). 순서 = 최종 답변 합성 순서
+    pending_intents: Optional[list[str]]         # 남은 실행 큐 (도구 먼저, DOC_SEARCH는 마지막)
+    tool_answers: Optional[list[dict]]           # 도구 실행 결과 누적 [{"intent": str, "answer": str}]
     domain: Optional[str]                        # (예약) 과거 라우터 분류 자리 — 현재 미사용
     dense_candidates: Optional[list[dict]]       # dense 검색 top_k개
     bm25_candidates: Optional[list[dict]]        # bm25 검색 top_k개
@@ -206,7 +209,8 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
   도메인 한정 모드는 이 필드로 구현한다 (별도 도구 불필요)
 - `tool`(선택): 처리 경로 강제 지정. 허용값 `DOC_SEARCH` + 강제 허용
   화이트리스트(tools.FORCIBLE_TOOLS)에 등록된 도구. 지정하면 라우터의 자동
-  분류를 무시하고 해당 경로로 직행한다 (**엄격 모드 — 잡담 예외 없음**).
+  분류를 무시하고 해당 경로로 직행한다 — 처리 계획(intents)도 그 경로
+  하나로 고정된다 (**엄격 모드 — 잡담 예외 없음**).
   빈 값 = 자동 분류, 미지의 값·강제 비허용 도구 = 경고 로그 후 자동 분류.
   쿼리 재작성(멀티턴 해소)은 강제 시에도 수행.
   ※ SMALLTALK은 강제 비허용: 잡담 경로는 verify 밖이라 강제로 업무 질문이
@@ -237,10 +241,12 @@ data: {"type":"done"}
 ```
 
 - `status`(0회 이상): 파이프라인 진행 상태 안내. text 이벤트 시작 전에만 온다.
-  stage 값: `route`(질문 분석) | `retrieve`(검색) | `rerank`(문서 선별) |
-  `generate`(답변 생성) | `verify`(근거 검증). 프론트는 message를 로딩
-  인디케이터로 표시하고 첫 text 수신 시 제거한다.
-  클라이언트는 미지의 type을 무시하도록 구현한다 (향후 확장 대비)
+  stage 값: `route`(질문 분석·계획 수립) | `tool`(도구 실행 — message는
+  도구별 문구, tools.TOOL_STATUS_MESSAGES) | `retrieve`(검색) |
+  `rerank`(문서 선별) | `generate`(답변 생성) | `verify`(근거 검증).
+  프론트는 message를 로딩 인디케이터로 표시하고 첫 text 수신 시 제거한다.
+  복합 계획이면 tool → retrieve처럼 stage가 여러 번 바뀔 수 있다.
+  클라이언트는 미지의 type·stage를 무시(문구만 표시)하도록 구현한다 (향후 확장 대비)
 
 오류 시:
 
@@ -343,19 +349,32 @@ data: {"type":"done"}
 
 ```python
 class ClassifyAndRewrite(BaseModel):
-    """멀티턴 맥락 해소 + 구어체 정규화 + 의도(경로) 분류"""
+    """멀티턴 맥락 해소 + 구어체 정규화 + 처리 계획(경로 목록) 분류"""
     rewritten_query: str   # 검색에 최적화된 쿼리
-    intent: str            # "DOC_SEARCH" | 도구 레지스트리 키 ("SMALLTALK" 등)
-    # intent는 처리 경로 선택값이다 (query_graph/tools.py의 레지스트리 기반).
-    # DOC_SEARCH: 기본 검색 파이프라인. SMALLTALK: 검색·검증 없이 직접 응답.
-    # 분류 실패/미지 값은 DOC_SEARCH 폴백. 요청의 tool 필드가 intent를 선설정하면
-    # 라우터는 분류를 건너뛰고 재작성만 수행한다 (강제 모드, 잡담 예외 없음)
+    intents: list[str]     # 처리 경로 목록: "DOC_SEARCH" | 도구 레지스트리 키.
+    # 보통 1개, 서로 다른 처리가 필요한 복합 질문이면 질문 순서대로 여러 개
+    # (plan-then-execute — 도구들을 먼저 실행해 tool_answers에 누적하고,
+    #  DOC_SEARCH가 있으면 검색 파이프라인 후 finalize가 계획 순서로 합성).
+    # 정규화: 미지 값 제거, 중복 제거, 최대 3개. SMALLTALK 등 단독 전용 도구
+    # (tools.TERMINAL_ONLY_TOOLS)는 다른 경로와 섞이면 제거 — verify 밖 자유
+    # 생성을 업무 답변과 합성하지 않는다. 결정적 매처(TOOL_MATCHERS)가 잡은
+    # 도구는 계획에 보장 포함되며, 짧은 질문(30자 이하)은 매처 단독으로 LLM 없이
+    # 종결한다. 분류 실패/전량 미지 값은 [DOC_SEARCH] 폴백. 요청의 tool 필드가
+    # 경로를 강제하면 계획은 그 경로 하나로 고정하고 재작성만 수행한다
+    # (강제 모드, 잡담 예외 없음)
 
 class VerifyAnswer(BaseModel):
     """답변이 문서에 근거하는지 검증"""
     grounded: bool
     reason: str
 ```
+
+합성 규칙: 최종 답변은 계획 순서대로 [도구 답변..., 검증된 문서 답변]을
+빈 줄로 이어 붙인 것이다 (graph._compose_final — **코드 조립만 허용**, verify
+뒤에서 LLM으로 다듬지 않는다). verify는 문서 파트(draft_answer)만 검증하며,
+도구 답변은 결정적 코드 산출물이라 검증 대상이 아니다. 문서 파트가 검증에
+실패해 fallback으로 가도 도구 답변은 유지된 채 문서 파트만 대체 문구로 바뀐다.
+sources는 지금처럼 grounded(문서 파트 검증 결과)일 때만 채워진다.
 
 ## 7. 프롬프트 규칙 (prompts.py)
 

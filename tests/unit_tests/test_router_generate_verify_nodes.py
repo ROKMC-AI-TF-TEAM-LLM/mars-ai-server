@@ -47,7 +47,7 @@ def test_route_tool_call_결과를_반영한다(monkeypatch: pytest.MonkeyPatch)
     fake = _FakeLLM(
         _tool_response(
             "ClassifyAndRewrite",
-            {"rewritten_query": "육아휴직 사용 가능 기간", "intent": "DOC_SEARCH"},
+            {"rewritten_query": "육아휴직 사용 가능 기간", "intents": ["DOC_SEARCH"]},
         )
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
@@ -59,16 +59,19 @@ def test_route_tool_call_결과를_반영한다(monkeypatch: pytest.MonkeyPatch)
         }
     )
     assert result["rewritten_query"] == "육아휴직 사용 가능 기간"
-    assert result["intent"] == "DOC_SEARCH"
+    assert result["intents"] == ["DOC_SEARCH"]
+    assert result["pending_intents"] == ["DOC_SEARCH"]
+    assert result["intent"] == "DOC_SEARCH"  # 대표값 (계획 첫 항목)
     assert result["retry_count"] == 0
 
 
 def test_route_미지의_intent는_DOC_SEARCH로_강등된다(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(
-        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "intent": "MARKETING"})
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "intents": ["MARKETING"]})
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "질문"})
+    assert result["intents"] == ["DOC_SEARCH"]
     assert result["intent"] == "DOC_SEARCH"
 
 
@@ -77,12 +80,14 @@ def test_route_강제_intent는_LLM_분류를_무시한다(monkeypatch: pytest.M
     fake = _FakeLLM(
         _tool_response(
             "ClassifyAndRewrite",
-            {"rewritten_query": "재작성된 질문", "intent": "DOC_SEARCH"},  # LLM은 검색이라 판단
+            # LLM은 검색이라 판단
+            {"rewritten_query": "재작성된 질문", "intents": ["DOC_SEARCH"]},
         )
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "질문", "intent": "SMALLTALK"})  # 강제
     assert result["intent"] == "SMALLTALK"  # 분류 무시, 강제값 유지
+    assert result["intents"] == ["SMALLTALK"]  # 계획도 강제 경로 하나로 고정
     assert result["rewritten_query"] == "재작성된 질문"  # 재작성은 수행
 
 
@@ -92,7 +97,7 @@ def test_route_이력은_대화가_아니라_데이터_블록으로_전달된다
     """이력을 user/assistant 메시지로 넣으면 작은 모델이 대화 이어가기로
     끌려가 tool-call을 놓친다 (실측). 시스템 + 단일 유저 메시지여야 한다."""
     fake = _FakeLLM(
-        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "intent": "DOC_SEARCH"})
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "질의", "intents": ["DOC_SEARCH"]})
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     router_module.route(
@@ -113,20 +118,22 @@ def test_route_이력은_대화가_아니라_데이터_블록으로_전달된다
 
 def test_route_결정적_매처는_LLM_없이_즉시_라우팅한다(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom() -> None:
-        raise AssertionError("매처가 잡으면 LLM을 호출하면 안 된다")
+        raise AssertionError("짧은 질문을 매처가 잡으면 LLM을 호출하면 안 된다")
 
     monkeypatch.setattr(router_module, "get_llm", boom)
     result = router_module.route({"question": "내 전역일은 2026년 12월 1일이야"})
     assert result["intent"] == "DISCHARGE_DAYS"
+    assert result["intents"] == ["DISCHARGE_DAYS"]
 
 
 def test_route_SMALLTALK_분류를_허용한다(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeLLM(
-        _tool_response("ClassifyAndRewrite", {"rewritten_query": "인사", "intent": "SMALLTALK"})
+        _tool_response("ClassifyAndRewrite", {"rewritten_query": "인사", "intents": ["SMALLTALK"]})
     )
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "내 이름은 원석이야"})
     assert result["intent"] == "SMALLTALK"
+    assert result["intents"] == ["SMALLTALK"]  # 단독 잡담은 계획으로 허용
 
 
 def test_route_tool_call_부재_시_원본과_DOC_SEARCH_폴백(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,7 +141,7 @@ def test_route_tool_call_부재_시_원본과_DOC_SEARCH_폴백(monkeypatch: pyt
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "육아휴직 알려줘"})
     assert result["rewritten_query"] == "육아휴직 알려줘"
-    assert result["intent"] == "DOC_SEARCH"
+    assert result["intents"] == ["DOC_SEARCH"]
 
 
 def test_route_예외_시에도_폴백으로_계속_진행한다(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +149,7 @@ def test_route_예외_시에도_폴백으로_계속_진행한다(monkeypatch: py
     monkeypatch.setattr(router_module, "get_llm", lambda: fake)
     result = router_module.route({"question": "육아휴직 알려줘"})
     assert result["rewritten_query"] == "육아휴직 알려줘"
-    assert result["intent"] == "DOC_SEARCH"
+    assert result["intents"] == ["DOC_SEARCH"]
 
 
 # ---------- generate ----------

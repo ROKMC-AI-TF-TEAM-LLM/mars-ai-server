@@ -17,9 +17,16 @@ class QueryState(TypedDict):
     # 요청이 명시한 검색 도메인 한정 (main.py에서 정규화). 빈 값이면 전 도메인 검색.
     # 검색 필터에 쓰이는 유일한 도메인 값
     requested_domain: str | None
-    # 처리 경로: "DOC_SEARCH" | 도구 레지스트리 키. 요청의 tool 필드가 선설정하면
-    # 강제(라우터 분류 무시), 없으면 route가 분류해 채운다
+    # 처리 경로 대표값(계획의 첫 항목, 로그·하위 호환용). 요청의 tool 필드가
+    # 선설정하면 강제(라우터 분류 무시), 없으면 route가 분류해 채운다
     intent: str | None
+    # 처리 계획: route가 확정한 경로 목록. 대부분 1개, 복합 질문이면 여러 개.
+    # 순서 = 최종 답변 합성 순서 (graph._compose_final)
+    intents: list[str] | None
+    # 남은 실행 큐 (도구 먼저, DOC_SEARCH는 마지막). 도구 노드가 자신을 지우며 소비
+    pending_intents: list[str] | None
+    # 도구 실행 결과 누적: [{"intent": str, "answer": str}]. finalize/fallback이 합성
+    tool_answers: list[dict] | None
     domain: str | None  # (예약) 과거 라우터 도메인 분류 자리 — 현재 미사용
     dense_candidates: list[dict] | None  # dense 검색 top_k개
     bm25_candidates: list[dict] | None  # bm25 검색 top_k개 (ACL 후처리 완료분)
