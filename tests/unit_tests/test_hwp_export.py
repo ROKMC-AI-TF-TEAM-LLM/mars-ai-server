@@ -99,8 +99,7 @@ def test_직전_답변을_hwpx로_저장하고_다운로드_링크를_답한다(
     result = hwp_export({"question": "한글 파일로 저장해줘", "conversation_history": history})
 
     assert result["grounded"] is False  # 문서 근거 주장 아님 (sources 미노출)
-    assert "/files/" in result["final_answer"]
-    # SSE file 이벤트 재료 (미들웨어 fetch-and-store 신호)
+    # 다운로드 경로는 텍스트가 아니라 SSE file 이벤트로만 전달한다 (미들웨어 신호)
     assert len(result["generated_files"]) == 1
     assert result["generated_files"][0]["tool"] == "HWP_EXPORT"
     assert result["generated_files"][0]["url"].startswith("/files/")
@@ -178,13 +177,54 @@ def test_방금_확정된_답변이_있으면_그걸_내보낸다(export_dir: Pa
             "conversation_history": [{"role": "assistant", "content": "옛날 답변"}],
         }
     )
-    assert "/files/" in result["final_answer"]
+    assert result["generated_files"][0]["url"].startswith("/files/")
     files = list(export_dir.glob("*.hwpx"))
     assert len(files) == 1
     with zipfile.ZipFile(files[0]) as archive:
         section = archive.read("Contents/section0.xml").decode("utf-8")
     assert "연차휴가는 매년 15일이" in section  # 방금 답변이 담김
     assert "옛날 답변" not in section  # 이력이 아니라 확정 답변 우선
+
+
+# ---------- EXPORT_DIR TTL 정리 ----------
+
+
+def test_TTL_지난_산출물은_새_파일_생성_시_정리된다(export_dir: Path) -> None:
+    """기회적 정리: 디렉터리가 커지는 유일한 경로(생성)에서 만료분을 지운다."""
+    import os
+    import time as time_module
+
+    expired_file = export_dir / "만료된_옛파일.hwpx"
+    expired_file.write_bytes(b"old")
+    expired_at = time_module.time() - 25 * 3600  # TTL(24시간)보다 오래됨
+    os.utime(expired_file, (expired_at, expired_at))
+    fresh_file = export_dir / "최근파일.hwpx"
+    fresh_file.write_bytes(b"new")
+
+    history = [{"role": "assistant", "content": "육아휴직은 최대 1년입니다."}]
+    hwp_export({"question": "한글 파일로 저장해줘", "conversation_history": history})
+
+    names = {p.name for p in export_dir.iterdir()}
+    assert "만료된_옛파일.hwpx" not in names  # 만료분 삭제
+    assert "최근파일.hwpx" in names  # TTL 이내는 유지
+    assert any(n.startswith("MARS_답변_") for n in names)  # 새 파일 생성
+
+
+def test_TTL_0이면_정리하지_않는다(monkeypatch: pytest.MonkeyPatch, export_dir: Path) -> None:
+    import os
+    import time as time_module
+
+    from ax_rag.shared.exports import cleanup_expired_exports
+
+    monkeypatch.setenv("EXPORT_TTL_HOURS", "0")
+    get_config.cache_clear()
+    old_file = export_dir / "아주_옛날.hwpx"
+    old_file.write_bytes(b"x")
+    ancient = time_module.time() - 999 * 3600
+    os.utime(old_file, (ancient, ancient))
+
+    assert cleanup_expired_exports() == 0
+    assert old_file.exists()  # 비활성 시 보존
 
 
 # ---------- GET /files 다운로드 ----------

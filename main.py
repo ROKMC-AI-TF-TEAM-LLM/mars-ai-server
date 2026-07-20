@@ -811,10 +811,13 @@ def delete_document(
     summary="생성 문서 다운로드",
     description=(
         "도구가 생성한 문서 파일(HWPX 등)을 내려받는다.\n\n"
-        "- `name`은 답변의 다운로드 링크에 포함된 파일명 (한글은 URL 인코딩)\n"
+        "- `name`은 SSE `file` 이벤트의 `name` 값 (한글은 URL 인코딩)\n"
         "- 파일은 EXPORT_DIR(기본 ./data/exports)에서만 서빙된다 (경로 탈출 차단)\n"
-        "- 404: 존재하지 않는 파일 (서버 정리로 삭제됐을 수 있음)\n\n"
-        "미들웨어는 프론트의 /files 경로 요청을 본 서버로 프록시해야 한다."
+        "- **임시 보관소**: EXPORT_TTL_HOURS(기본 24시간) 지난 파일은 새 파일 "
+        "생성 시점에 자동 정리된다\n"
+        "- 404: 존재하지 않는 파일 (TTL 정리로 삭제됐을 수 있음)\n\n"
+        "미들웨어는 file 이벤트 수신 즉시 파일을 가져가 자체 저장한다 "
+        "(fetch-and-store, interfaces.md §5)."
     ),
 )
 def download_file(

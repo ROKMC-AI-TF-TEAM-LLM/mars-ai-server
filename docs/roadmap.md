@@ -131,5 +131,3 @@
   페이지 추적 요구가 확정되면 인덱싱 스키마에 page 필드 추가 필요
 - Milvus Lite 데이터 파일 실제 경로/권한
 - 예상 동시 사용자 수 (max_num_seqs, 병렬화 여부 결정 변수)
-- EXPORT_DIR(생성 문서 임시 보관소) 자동 정리 TTL — 미들웨어의
-  fetch-and-store 저장이 확정되면 도입 (interfaces.md §5 GET /files 참조)

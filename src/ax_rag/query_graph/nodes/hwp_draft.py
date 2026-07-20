@@ -21,6 +21,7 @@ from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import HWP_DRAFT_SYSTEM_PROMPT, history_to_messages
 from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.config import get_config
+from ax_rag.shared.exports import cleanup_expired_exports
 from ax_rag.shared.hwpx_writer import write_hwpx
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -54,6 +55,8 @@ def hwp_draft(state: QueryState) -> dict:
     if not draft:
         return {"final_answer": DRAFT_FAIL_ANSWER, "grounded": False, "retrieved_chunks": []}
 
+    cleanup_expired_exports()  # 기회적 정리: 새 파일을 만드는 시점에 만료분 삭제
+
     # 같은 초 다중 생성 충돌 방지 무작위 접미사 (hwp_export와 동일)
     filename = f"MARS_초안_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.hwpx"
     try:
@@ -72,7 +75,6 @@ def hwp_draft(state: QueryState) -> dict:
         f"{draft}\n"
         "---\n\n"
         f"- 파일명: {filename}\n"
-        f"- 다운로드: {file_url}\n\n"
         "초안이므로 [빈칸] 등 누락된 정보를 확인·보완한 뒤 사용해 주세요."
     )
     # LLM 생성 초안은 문서 근거를 주장하지 않는다 (sources 미노출)

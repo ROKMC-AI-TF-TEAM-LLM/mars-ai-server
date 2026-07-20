@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.config import get_config
+from ax_rag.shared.exports import cleanup_expired_exports
 from ax_rag.shared.hwpx_writer import write_hwpx
 from ax_rag.shared.logging_setup import get_logger
 
@@ -68,6 +69,8 @@ def hwp_export(state: QueryState) -> dict:
         answer_text = _last_assistant_answer(state.get("conversation_history") or [])
     if not answer_text:
         return {"final_answer": NO_CONTENT_ANSWER, "grounded": False, "retrieved_chunks": []}
+
+    cleanup_expired_exports()  # 기회적 정리: 새 파일을 만드는 시점에 만료분 삭제
 
     # 같은 초에 여러 건이 생성돼도 충돌하지 않도록 무작위 접미사를 붙인다 (실측)
     filename = f"MARS_답변_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.hwpx"

@@ -86,6 +86,11 @@ class Config:
     # --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
     EXPORT_DIR: str = "./data/exports"
 
+    # 생성 문서 보관 시간(시간 단위). 새 파일 생성 시점에 만료분을 정리한다
+    # (기회적 정리 — 미들웨어가 file 이벤트로 즉시 가져가므로 임시 보관이면 충분).
+    # 0 이하면 정리 비활성
+    EXPORT_TTL_HOURS: int = 24
+
     # --- 외부 서비스 호출 공통 timeout (초) ---
     HTTP_TIMEOUT_SECONDS: float = 60.0
 
@@ -150,6 +155,7 @@ def get_config() -> Config:
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),
         EXPORT_DIR=_env_str("EXPORT_DIR", "./data/exports"),
+        EXPORT_TTL_HOURS=_env_int("EXPORT_TTL_HOURS", 24),
         HTTP_TIMEOUT_SECONDS=_env_float("HTTP_TIMEOUT_SECONDS", 60.0),
         LOG_LEVEL=_env_str("LOG_LEVEL", "INFO"),
         STREAM_TEXT_INTERVAL_MS=_env_int("STREAM_TEXT_INTERVAL_MS", 200),
