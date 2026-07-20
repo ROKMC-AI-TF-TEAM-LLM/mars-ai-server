@@ -458,6 +458,9 @@ RERANKER_DEVICE=cuda
 RERANKER_MODEL_PATH=./models/bge-reranker-v2-m3 # 로컬 경로만 (Hub ID 금지)
 RERANK_TOP_K=20
 RERANK_TOP_N=5
+# 리랭크 점수 하한(0~1). 미만 후보는 top_n 이내라도 근거·출처에서 제외
+# (무관 문서의 컨텍스트 오염·출처 오표기 방지 — 실측: 관련 0.6+/무관 0.05 미만). 0=비활성
+RERANK_SCORE_THRESHOLD=0.5
 
 # --- Milvus Lite (임베디드) ---
 MILVUS_LITE_PATH=./data/milvus_ax.db

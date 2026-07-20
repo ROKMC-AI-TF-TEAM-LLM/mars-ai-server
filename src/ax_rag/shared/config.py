@@ -58,6 +58,12 @@ class Config:
     RERANKER_MODEL_PATH: str  # 로컬 경로만 허용 (Hub ID 금지)
     RERANK_TOP_K: int
     RERANK_TOP_N: int
+    # 리랭크 점수 하한 (0~1). 이 미만 후보는 top_n 이내라도 근거·출처에서
+    # 제외한다. bge-reranker 점수는 관련(0.6+)/무관(0.05 미만)으로 극명하게
+    # 갈리는 분포(실측)라 그 사이 값이면 무관 문서를 안정적으로 걸러낸다.
+    # 0이면 비활성 (기존 동작). 코퍼스가 커져 중간 점수대가 생기면
+    # 평가셋으로 재조정할 것 (roadmap 6단계)
+    RERANK_SCORE_THRESHOLD: float
 
     # --- Milvus Lite (임베디드) ---
     MILVUS_LITE_PATH: str
@@ -145,6 +151,7 @@ def get_config() -> Config:
         RERANKER_MODEL_PATH=_env_str("RERANKER_MODEL_PATH", "./models/bge-reranker-v2-m3"),
         RERANK_TOP_K=_env_int("RERANK_TOP_K", 20),
         RERANK_TOP_N=_env_int("RERANK_TOP_N", 5),
+        RERANK_SCORE_THRESHOLD=_env_float("RERANK_SCORE_THRESHOLD", 0.5),
         MILVUS_LITE_PATH=_env_str("MILVUS_LITE_PATH", "./data/milvus_ax.db"),
         MILVUS_COLLECTION=_env_str("MILVUS_COLLECTION", "company_docs"),
         BM25_INDEX_PATH=_env_str("BM25_INDEX_PATH", "./data/bm25_index"),

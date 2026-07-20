@@ -45,6 +45,11 @@ def rerank(state: QueryState) -> dict:
     for candidate, score in ranked:
         if len(retrieved_chunks) >= config.RERANK_TOP_N:
             break
+        if score < config.RERANK_SCORE_THRESHOLD:
+            # 점수 내림차순이므로 이후 후보는 전부 미달 — 무관 문서가 top_n을
+            # 채우는 것을 막는다 (컨텍스트 오염·출처 오표기 방지, 실측 분포 근거).
+            # 전부 미달이면 근거 0건 → generate 빈 초안 → verify fail-closed
+            break
         parent_id = candidate.get("parent_id") or ""
         # 같은 부모의 자식이 여럿 뽑히면 부모 텍스트가 중복되므로 한 번만 치환한다
         if parent_id in seen_parent_ids:
@@ -61,5 +66,10 @@ def rerank(state: QueryState) -> dict:
         if parent_id:
             seen_parent_ids.add(parent_id)
 
-    logger.info("리랭크: 후보 %d건 → 확정 %d건", len(candidates), len(retrieved_chunks))
+    logger.info(
+        "리랭크: 후보 %d건 → 확정 %d건 (임계값 %.2f)",
+        len(candidates),
+        len(retrieved_chunks),
+        config.RERANK_SCORE_THRESHOLD,
+    )
     return {"retrieved_chunks": retrieved_chunks}
