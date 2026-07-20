@@ -87,7 +87,6 @@ def hwp_export(state: QueryState) -> dict:
     final_answer = (
         f"{intro} 한글 문서(HWPX)로 만들었습니다.\n\n"
         f"- 파일명: {filename}\n"
-        f"- 다운로드: {file_url}\n\n"
         "한글 2014 이상에서 열 수 있습니다."
     )
     return {
