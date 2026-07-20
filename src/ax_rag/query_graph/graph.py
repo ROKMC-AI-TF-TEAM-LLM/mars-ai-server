@@ -33,6 +33,7 @@ from ax_rag.query_graph.prompts import FALLBACK_ANSWER
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tools import (
     DOC_SEARCH,
+    POST_SEARCH_TOOLS,
     TERMINAL_ONLY_TOOLS,
     TOOL_NODES,
     execution_queue,
@@ -68,8 +69,16 @@ def _compose_final(state: QueryState, doc_part: str) -> str:
 
 
 def finalize(state: QueryState) -> dict:
-    """검증 통과한 초안(+도구 답변)을 계획 순서로 합성해 확정한다."""
-    return {"final_answer": _compose_final(state, state.get("draft_answer") or "")}
+    """검증 통과한 초안(+도구 답변)을 계획 순서로 합성해 확정한다.
+
+    실행 큐에서 DOC_SEARCH를 지워, 남은 후처리 도구(POST_SEARCH_TOOLS)가
+    after_finalize 분기로 이어질 수 있게 한다.
+    """
+    pending = [n for n in (state.get("pending_intents") or []) if n != DOC_SEARCH]
+    return {
+        "final_answer": _compose_final(state, state.get("draft_answer") or ""),
+        "pending_intents": pending,
+    }
 
 
 def increment_retry(state: QueryState) -> dict:
@@ -91,6 +100,36 @@ def fallback(state: QueryState) -> dict:
     return {"final_answer": _compose_final(state, FALLBACK_ANSWER)}
 
 
+def _make_post_tool_step(
+    intent_name: str, tool_node: Callable[[dict], dict]
+) -> Callable[[dict], dict]:
+    """후처리 도구 노드 래퍼: 확정된 final_answer 뒤에 도구 답변을 이어 붙인다.
+
+    검색 파이프라인 뒤(finalize 후)에 실행되므로 도구는 state.final_answer
+    (방금 검증·합성된 답변)를 입력으로 쓸 수 있다. 단독 실행(계획이 후처리
+    도구뿐)이면 final_answer가 아직 없어 도구 답변만 확정된다.
+    합성은 코드 조립만 — verify 뒤 LLM 가공 금지 원칙 유지.
+    """
+
+    def post_tool_step(state: QueryState) -> dict:
+        delta = tool_node(state) or {}
+        answer = str(delta.get("final_answer") or "")
+        base = state.get("final_answer") or _compose_final(state, "")
+        return {
+            "final_answer": f"{base}\n\n{answer}" if base and answer else (answer or base),
+            "pending_intents": [
+                name for name in (state.get("pending_intents") or []) if name != intent_name
+            ],
+            # 도구가 만든 파일 정보는 SSE file 이벤트 재료로 누적 전달한다
+            "generated_files": [
+                *(state.get("generated_files") or []),
+                *(delta.get("generated_files") or []),
+            ],
+        }
+
+    return post_tool_step
+
+
 def _make_tool_step(intent_name: str, tool_node: Callable[[dict], dict]) -> Callable[[dict], dict]:
     """도구 노드를 계획 실행 단계로 감싼다.
 
@@ -109,6 +148,11 @@ def _make_tool_step(intent_name: str, tool_node: Callable[[dict], dict]) -> Call
             ],
             "pending_intents": [
                 name for name in (state.get("pending_intents") or []) if name != intent_name
+            ],
+            # 도구가 만든 파일 정보는 SSE file 이벤트 재료로 누적 전달한다
+            "generated_files": [
+                *(state.get("generated_files") or []),
+                *(delta.get("generated_files") or []),
             ],
         }
 
@@ -135,6 +179,17 @@ def after_route(state: QueryState) -> str:
     return next_step(state)
 
 
+def after_finalize(state: QueryState) -> str:
+    """finalize·후처리 도구 완료 후 분기: 남은 후처리 도구 실행 또는 종료.
+
+    fallback 경로는 이 분기를 타지 않는다 (검증 실패 답변은 후처리하지 않음).
+    """
+    pending = state.get("pending_intents") or []
+    if pending and pending[0] in POST_SEARCH_TOOLS:
+        return pending[0]
+    return END
+
+
 def after_verify(state: QueryState) -> str:
     """verify 결과에 따른 분기: finalize / increment_retry / fallback."""
     if state.get("grounded"):
@@ -158,17 +213,29 @@ def _build_graph() -> StateGraph:
     builder.add_node("fallback", fallback)
 
     # 도구 레지스트리 자동 배선: 노드 이름 = intent 값.
-    # 단독 전용 도구는 종착(→ END), 그 외는 실행 큐를 따라 다음 단계로 이어진다
-    composable = [name for name in TOOL_NODES if name not in TERMINAL_ONLY_TOOLS]
+    # - 단독 전용(TERMINAL_ONLY): 종착 노드 (→ END)
+    # - 후처리(POST_SEARCH): finalize 뒤에 실행, 확정 답변에 이어 붙임
+    # - 그 외(전처리): 실행 큐를 따라 검색 파이프라인 앞에서 순차 실행
+    pre_tools = [
+        name
+        for name in TOOL_NODES
+        if name not in TERMINAL_ONLY_TOOLS and name not in POST_SEARCH_TOOLS
+    ]
+    post_tools = [name for name in TOOL_NODES if name in POST_SEARCH_TOOLS]
     step_targets = {
-        **{name: name for name in composable},
+        **{name: name for name in pre_tools},
+        **{name: name for name in post_tools},
         "dense_retrieve": "dense_retrieve",
         "finalize": "finalize",
     }
+    post_targets = {**{name: name for name in post_tools}, END: END}
     for intent_name, tool_node in TOOL_NODES.items():
         if intent_name in TERMINAL_ONLY_TOOLS:
             builder.add_node(intent_name, tool_node)
             builder.add_edge(intent_name, END)
+        elif intent_name in POST_SEARCH_TOOLS:
+            builder.add_node(intent_name, _make_post_tool_step(intent_name, tool_node))
+            builder.add_conditional_edges(intent_name, after_finalize, post_targets)
         else:
             builder.add_node(intent_name, _make_tool_step(intent_name, tool_node))
             builder.add_conditional_edges(intent_name, next_step, step_targets)
@@ -194,7 +261,9 @@ def _build_graph() -> StateGraph:
         },
     )
     builder.add_edge("increment_retry", "generate")
-    builder.add_edge("finalize", END)
+    # finalize 후 남은 후처리 도구가 있으면 실행, 없으면 종료.
+    # fallback은 후처리 없이 바로 종료 — 검증 실패 답변은 파일 등으로 후처리하지 않는다
+    builder.add_conditional_edges("finalize", after_finalize, post_targets)
     builder.add_edge("fallback", END)
     return builder
 

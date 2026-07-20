@@ -15,7 +15,9 @@ def config() -> Config:
 
 
 def test_기본_URL은_전부_localhost다(config: Config) -> None:
-    assert config.AX_BASE_URL.startswith("http://localhost:8000")
+    # LLM 포트는 .env가 바꿀 수 있다 (개발 노트북에서 Ollama 11434 등 서빙 교체
+    # 실험) — 에어갭의 본질은 호스트가 localhost라는 것
+    assert config.AX_BASE_URL.startswith("http://localhost:")
     assert config.EMBEDDING_SERVER_URL.startswith("http://localhost:8001")
     assert config.RERANKER_SERVER_URL.startswith("http://localhost:8002")
 
@@ -40,6 +42,8 @@ def test_수치_설정_타입과_기본값(config: Config) -> None:
     assert config.HISTORY_MAX_TOKENS == 1500
     # 정확한 값은 .env가 덮어쓸 수 있으므로(개발 노트북 완화 등) 양수만 보장한다
     assert config.HTTP_TIMEOUT_SECONDS > 0
+    # generate 전용 온도: 0(결정적)~1 범위만 보장 (.env로 조정 가능)
+    assert 0.0 <= config.GENERATE_TEMPERATURE <= 1.0
 
 
 def test_도메인_분류_체계() -> None:

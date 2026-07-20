@@ -39,7 +39,9 @@ def test_재시도_소진이면_fallback() -> None:
 
 
 def test_finalize는_초안을_확정한다() -> None:
-    assert finalize({"draft_answer": "확정 답변"}) == {"final_answer": "확정 답변"}
+    result = finalize({"draft_answer": "확정 답변"})
+    assert result["final_answer"] == "확정 답변"
+    assert result["pending_intents"] == []  # DOC_SEARCH는 큐에서 소비됨
 
 
 def test_increment_retry는_횟수를_올린다() -> None:

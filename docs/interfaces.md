@@ -61,6 +61,7 @@ class QueryState(TypedDict):
     intents: Optional[list[str]]                 # 처리 계획 (복수 가능). 순서 = 최종 답변 합성 순서
     pending_intents: Optional[list[str]]         # 남은 실행 큐 (도구 먼저, DOC_SEARCH는 마지막)
     tool_answers: Optional[list[dict]]           # 도구 실행 결과 누적 [{"intent": str, "answer": str}]
+    generated_files: Optional[list[dict]]        # 도구 생성 파일 [{"name", "url", "tool"}] → SSE file 이벤트
     domain: Optional[str]                        # (예약) 과거 라우터 분류 자리 — 현재 미사용
     dense_candidates: Optional[list[dict]]       # dense 검색 top_k개
     bm25_candidates: Optional[list[dict]]        # bm25 검색 top_k개
@@ -224,7 +225,7 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 
 **응답** (Content-Type: text/event-stream):
 
-이벤트는 `data: {JSON}\n\n` 형식. 타입 4종 + 종료 신호:
+이벤트는 `data: {JSON}\n\n` 형식. 타입 5종 + 종료 신호:
 
 ```
 data: {"type":"status","stage":"retrieve","message":"사내 문서를 검색하는 중..."}
@@ -234,6 +235,8 @@ data: {"type":"status","stage":"generate","message":"답변을 생성하는 중.
 data: {"type":"text","content":"육아휴직은"}
 
 data: {"type":"text","content":" 최대 1년까지 사용할 수 있습니다."}
+
+data: {"type":"file","name":"MARS_답변_20260720_1e7bdc.hwpx","url":"/files/MARS_%EB%8B%B5%EB%B3%80_20260720_1e7bdc.hwpx","tool":"HWP_EXPORT"}
 
 data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
 
@@ -247,6 +250,11 @@ data: {"type":"done"}
   프론트는 message를 로딩 인디케이터로 표시하고 첫 text 수신 시 제거한다.
   복합 계획이면 tool → retrieve처럼 stage가 여러 번 바뀔 수 있다.
   클라이언트는 미지의 type·stage를 무시(문구만 표시)하도록 구현한다 (향후 확장 대비)
+- `file`(0회 이상): 도구가 생성한 파일(HWPX 등)의 **구조화 신호**.
+  text 전송이 끝난 뒤 sources 전에 온다. 필드: `name`(파일명),
+  `url`(/files/{URL인코딩 파일명}), `tool`(생성 도구 — HWP_EXPORT 등).
+  **미들웨어는 이 이벤트를 fetch-and-store의 트리거로 쓴다** — 답변 text
+  속 다운로드 문구는 사람용 표시일 뿐이므로 정규식으로 파싱하지 않는다
 
 오류 시:
 
@@ -345,6 +353,45 @@ data: {"type":"done"}
 - 응답: `{"name": str, "deleted_chunks": int, "deleted_parents": int}`
 - 404: 미적재 문서, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
 
+### 우리 서버 `GET /files/{name}` (9000) — 생성 문서 다운로드
+
+- 도구(HWP_EXPORT 등)가 만든 문서 파일을 내려받는다. `name`은 답변의
+  다운로드 링크에 포함된 파일명 (한글은 URL 인코딩)
+- 파일은 `EXPORT_DIR`(기본 ./data/exports)에서만 서빙된다 — 경로 성분이
+  섞인 이름은 400, 없는 파일은 404. Content-Disposition으로 파일명 전달됨
+- **본 엔드포인트는 접근 제어가 없다** (내부망 신뢰 — 본 서버는 사용자
+  신원을 모른다). 파일 소유권·인증이 필요한 전달은 아래 미들웨어 책임
+
+**미들웨어 권장 흐름 (fetch-and-store — 최종 보관은 미들웨어)**:
+
+1. SSE `{"type": "file", "name", "url", "tool"}` 이벤트를 감지한다 —
+   파일 생성의 공식 신호다 (답변 text 속 다운로드 문구는 사람용 표시일
+   뿐이며 형식이 바뀔 수 있으므로 파싱하지 않는다)
+2. 감지 즉시 본 서버 `GET /files/{name}`으로 파일을 가져와 **미들웨어
+   저장소(DB 등)에 로그인 사용자·대화와 매핑해 저장**한다 (HWPX는 수 KB~
+   수십 KB라 DB BLOB로 충분)
+3. 프론트에는 미들웨어 자체 다운로드 URL로 치환해 전달한다 — 접근 제어
+   (본인만 다운로드), 대화와의 수명 주기(대화 삭제 시 파일 삭제), 다운로드
+   감사 추적이 전부 미들웨어에서 가능해진다
+4. 본 서버의 EXPORT_DIR은 **임시 보관소**다 — 미들웨어가 가져간 뒤에는
+   보존을 보장하지 않는다 (오래된 파일 자동 정리 TTL은 향후 도입 예정,
+   미확정 항목). 단순 프록시 방식도 동작은 하지만 접근 제어·보존이 없어
+   차선책이다
+
+- **HWP_EXPORT** 도구: 답변을 **있는 그대로** 한글 2014+ 표준 HWPX로
+  내보낸다. 후처리 도구(tools.POST_SEARCH_TOOLS) — 복합 질문("휴가 규정
+  찾아서 한글 파일로 저장해줘")이면 검색 파이프라인 **뒤에** 실행되어 방금
+  검증·확정된 답변을 파일로 만들고, 단독 요청("이 답변 저장해줘")이면 직전
+  답변(마지막 ai 메시지)을 쓴다. 검증 실패(fallback) 답변은 파일로 만들지
+  않는다. 강제 지정 허용(FORCIBLE — 프론트 "답변 저장" 버튼은
+  `tool=HWP_EXPORT`로 호출)
+- **HWP_DRAFT** 도구: 사용자가 요청에 담아 준 내용으로 **새 문서 초안**
+  (공문·보고서 등)을 LLM으로 작성해 HWPX로 저장한다 ("이 내용으로 공문
+  초본 잡아서 파일로 생성해줘"). verify 밖 LLM 생성이므로 "제공된 내용만
+  재구성, 없는 정보는 [빈칸] 표시" 원칙을 프롬프트로 강제하고, 답변에
+  초안 미리보기를 함께 담는다. 단독 전용, 강제 지정 허용.
+  서식(휴가신청서 등) 고정 템플릿 채우기는 향후 확장 항목
+
 ## 6. Tool 스키마 (vLLM `--tool-call-parser hermes`로 파싱)
 
 ```python
@@ -424,12 +471,18 @@ SEARCH_TOP_K=20
 # --- 파이프라인 ---
 MAX_VERIFY_RETRY=1
 HISTORY_MAX_TOKENS=1500
+# generate(답변 생성) 전용 온도. 라우터·검증은 0 고정 (분류·판정 재현성),
+# 잡담(SMALLTALK)은 코드 상수 0.7. 0이면 verify 재시도가 사실상 같은 답을 재생성함
+GENERATE_TEMPERATURE=0.2
 
 # --- 감사 로그 ---
 AUDIT_LOG_PATH=./data/audit_log.jsonl
 
 # --- 문서 업로드 저장 경로 (POST /documents 원본 보관) ---
 UPLOAD_DIR=./data/uploads
+
+# --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
+EXPORT_DIR=./data/exports
 
 # --- 외부 서비스 호출 공통 timeout(초). CPU 임베딩 등 느린 환경은 늘린다 ---
 HTTP_TIMEOUT_SECONDS=60

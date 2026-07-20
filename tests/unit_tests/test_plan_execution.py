@@ -117,6 +117,19 @@ def test_route_긴_질문은_매처_히트여도_LLM을_태우고_병합한다(
     assert result["pending_intents"] == ["DISCHARGE_DAYS", "DOC_SEARCH"]
 
 
+def test_route_짧아도_검색_힌트가_있으면_LLM을_병행한다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "규정 찾아서 저장해줘"(30자 이하 + 매처 히트)가 매처 단독으로 검색
+    없이 종결되는 사고 방지 — 검색 힌트가 있으면 LLM 분류를 태운다."""
+    fake = _FakeLLM(_classify_response("휴가 규정", ["DOC_SEARCH"]))
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": "규정 찾아서 한글 파일로 저장해줘"})
+    assert fake.captured_messages is not None  # LLM 호출됨 (단독 종결 아님)
+    assert result["intents"] == ["DOC_SEARCH", "HWP_EXPORT"]  # 매처 도구 병합
+    assert result["pending_intents"] == ["DOC_SEARCH", "HWP_EXPORT"]  # 검색 → 후처리 순
+
+
 def test_route_LLM_실패해도_매처_확정_도구는_잃지_않는다(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

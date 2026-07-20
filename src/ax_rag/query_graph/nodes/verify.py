@@ -23,7 +23,7 @@ from ax_rag.query_graph.prompts import (
 )
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
-from ax_rag.query_graph.tools import TOOL_DESCRIPTIONS
+from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_DESCRIPTIONS
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
@@ -36,6 +36,11 @@ def _tool_handled_note(state: QueryState) -> str:
     도구 답변의 수치는 넣지 않는다 (검증 기준 오염 방지) — 유형 설명만 전달한다.
     """
     handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
+    handled += [
+        name
+        for name in (state.get("intents") or [])
+        if name in POST_SEARCH_TOOLS and name not in handled
+    ]
     if not handled:
         return ""
     lines = "\n".join(f"- {TOOL_DESCRIPTIONS.get(name, name)}" for name in handled if name)

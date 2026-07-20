@@ -22,7 +22,7 @@ from typing import Annotated
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi import Path as PathParam
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ax_rag.indexer_graph import ingest
@@ -106,7 +106,7 @@ class QueryRequest(BaseModel):
         default="",
         description=(
             "처리 경로 강제 지정 (선택). 허용값은 GET /capabilities의 forcible=true 항목 "
-            "(현재: DOC_SEARCH, DISCHARGE_DAYS). "
+            "(현재: DOC_SEARCH, DISCHARGE_DAYS, HWP_EXPORT). "
             "지정하면 라우터의 자동 분류를 무시하고 해당 경로로 직행한다 (잡담 예외 없음). "
             "빈 값이면 자동 분류, 미지의 값·강제 비허용 도구(SMALLTALK 등)는 무시하고 자동 분류"
         ),
@@ -195,9 +195,13 @@ def split_for_stream(text: str) -> list[str]:
     return pieces
 
 
-async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → done 이벤트로 종료.
+async def stream_answer(
+    final_answer: str, sources: list[dict], files: list[dict] | None = None
+) -> AsyncIterator[str]:
+    """확정된 답변을 text 이벤트로 분할 전송 → file 0회 이상 → sources 1회 → done.
 
+    file 이벤트는 도구가 생성한 파일(HWPX 등)의 구조화 신호다 — 미들웨어가
+    답변 텍스트를 정규식으로 파싱하지 않고 이 이벤트로 fetch-and-store 한다.
     조각 사이 간격(config.STREAM_TEXT_INTERVAL_MS)을 두어 TCP 병합 없이
     순차 도착하게 하고, 프론트에서 타자기 효과가 보이게 한다.
     """
@@ -208,6 +212,9 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
         logger.debug("SSE text [%d/%d] (%d자): %s", index, len(pieces), len(piece), piece)
         yield sse_event({"type": "text", "content": piece})
         await asyncio.sleep(interval_seconds)
+    for file_info in files or []:
+        logger.debug("SSE file: %s", file_info.get("name"))
+        yield sse_event({"type": "file", **file_info})
     logger.debug("SSE sources: %s", [s["name"] for s in sources])
     yield sse_event({"type": "sources", "items": sources})
     logger.debug("SSE done")
@@ -251,6 +258,13 @@ def _status_after_node(node_name: str, merged_state: dict) -> tuple[str, str] | 
     if node_name in TOOL_NODES and node_name not in TERMINAL_ONLY_TOOLS:
         # 계획 실행 중인 도구 완료 → 남은 큐 기준으로 다음 단계 안내
         return _next_stage_status(merged_state)
+    if node_name == "finalize":
+        # 복합 계획의 후처리 도구(HWP_EXPORT 등)가 남아 있으면 실행 안내
+        pending = merged_state.get("pending_intents") or []
+        head = pending[0] if pending else None
+        if head in TOOL_NODES:
+            return ("tool", TOOL_STATUS_MESSAGES.get(head, DEFAULT_TOOL_STATUS_MESSAGE))
+        return None
     if node_name == "fuse":
         return ("rerank", "관련 문서를 선별하는 중...")
     if node_name == "rerank":
@@ -347,7 +361,9 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
             sources=[s["name"] for s in sources],
             grounded=grounded,
         )
-        async for frame in stream_answer(result.get("final_answer") or "", sources):
+        async for frame in stream_answer(
+            result.get("final_answer") or "", sources, result.get("generated_files") or []
+        ):
             yield frame
     except asyncio.CancelledError:
         # 클라이언트가 연결을 중단(abort)하면 Starlette가 이 제너레이터를 취소한다.
@@ -790,6 +806,30 @@ def delete_document(
     )
 
 
+@app.get(
+    "/files/{name}",
+    summary="생성 문서 다운로드",
+    description=(
+        "도구가 생성한 문서 파일(HWPX 등)을 내려받는다.\n\n"
+        "- `name`은 답변의 다운로드 링크에 포함된 파일명 (한글은 URL 인코딩)\n"
+        "- 파일은 EXPORT_DIR(기본 ./data/exports)에서만 서빙된다 (경로 탈출 차단)\n"
+        "- 404: 존재하지 않는 파일 (서버 정리로 삭제됐을 수 있음)\n\n"
+        "미들웨어는 프론트의 /files 경로 요청을 본 서버로 프록시해야 한다."
+    ),
+)
+def download_file(
+    name: Annotated[str, PathParam(description="파일명 (예: MARS_답변_20260716_103000.hwpx)")],
+) -> FileResponse:
+    safe_name = (name or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+    # 경로 성분이 섞였거나 숨김 파일 형태면 거부한다 (EXPORT_DIR 밖 접근 차단)
+    if not safe_name or safe_name != name.strip() or safe_name.startswith("."):
+        raise HTTPException(status_code=400, detail="유효하지 않은 파일명이다")
+    path = Path(get_config().EXPORT_DIR) / safe_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"파일이 없다: {safe_name}")
+    return FileResponse(path, filename=safe_name, media_type="application/octet-stream")
+
+
 _QUERY_RESPONSES = {
     200: {
         "description": (
@@ -800,10 +840,13 @@ _QUERY_RESPONSES = {
             "retrieve | rerank | generate | verify\n"
             '2. `{"type": "text", "content": str}` — 답변 조각, N회 '
             "(문장 단위, STREAM_TEXT_INTERVAL_MS 간격)\n"
-            '3. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
+            '3. `{"type": "file", "name": str, "url": str, "tool": str}` — '
+            "도구가 생성한 파일(HWPX 등), 0회 이상. **미들웨어는 이 이벤트를 "
+            "신호로 파일을 가져가 저장**한다 (답변 텍스트 파싱 불필요)\n"
+            '4. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
             "정확히 1회. 근거 검증(verify)을 통과한 답변에만 문서가 담기며, "
             "fallback·잡담 응답은 빈 배열\n"
-            '4. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
+            '5. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
             '파이프라인 예외 시: `{"type": "error", "message": str}` → done. '
             "fallback 답변은 error가 아니라 정상 text로 전송된다. "
             "클라이언트는 미지의 type을 무시하도록 구현할 것 (향후 확장 대비)."

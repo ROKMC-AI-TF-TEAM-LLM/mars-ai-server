@@ -72,12 +72,19 @@ class Config:
     # --- 파이프라인 ---
     MAX_VERIFY_RETRY: int
     HISTORY_MAX_TOKENS: int
+    # generate 노드 전용 온도 (기본 0.2). 라우터·verify는 0 고정(분류·판정
+    # 재현성), 답변 생성만 살짝 올려 문장 자연스러움 + verify 재시도 시
+    # 실질적으로 다른 초안이 나오게 한다 (0이면 재생성해도 사실상 같은 답)
+    GENERATE_TEMPERATURE: float
 
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
     # --- 문서 업로드 저장 경로 (POST /documents가 받은 파일 원본 보관) ---
     UPLOAD_DIR: str = "./data/uploads"
+
+    # --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
+    EXPORT_DIR: str = "./data/exports"
 
     # --- 외부 서비스 호출 공통 timeout (초) ---
     HTTP_TIMEOUT_SECONDS: float = 60.0
@@ -139,8 +146,10 @@ def get_config() -> Config:
         SEARCH_TOP_K=_env_int("SEARCH_TOP_K", 20),
         MAX_VERIFY_RETRY=_env_int("MAX_VERIFY_RETRY", 1),
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
+        GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),
+        EXPORT_DIR=_env_str("EXPORT_DIR", "./data/exports"),
         HTTP_TIMEOUT_SECONDS=_env_float("HTTP_TIMEOUT_SECONDS", 60.0),
         LOG_LEVEL=_env_str("LOG_LEVEL", "INFO"),
         STREAM_TEXT_INTERVAL_MS=_env_int("STREAM_TEXT_INTERVAL_MS", 200),

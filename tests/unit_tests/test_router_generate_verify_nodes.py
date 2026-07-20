@@ -182,6 +182,16 @@ def test_generate_프롬프트_계약을_지킨다(monkeypatch: pytest.MonkeyPat
     assert "육아휴직 사용 가능 기간" in user_text  # rewritten_query
 
 
+def test_generate는_설정_온도로_호출한다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """답변 생성만 GENERATE_TEMPERATURE(기본 0.2) — 라우터·verify는 0 유지."""
+    from ax_rag.shared.config import get_config
+
+    fake = _FakeLLM(SimpleNamespace(content="답변", tool_calls=[]))
+    monkeypatch.setattr(generate_module, "get_llm", lambda: fake)
+    generate_module.generate({"question": "질문", "retrieved_chunks": _CHUNKS})
+    assert fake.bind_kwargs == {"temperature": get_config().GENERATE_TEMPERATURE}
+
+
 def test_generate_근거_없으면_빈_초안(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom() -> None:
         raise AssertionError("근거 없으면 LLM을 호출하면 안 된다")

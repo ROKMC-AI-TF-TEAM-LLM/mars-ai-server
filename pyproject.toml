@@ -18,6 +18,10 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# HWPX 생성 템플릿 (한글이 만든 빈 문서 골격 — hwpx_writer.py가 사용)
+"ax_rag.shared" = ["resources/*.hwpx"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

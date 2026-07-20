@@ -27,6 +27,9 @@ class QueryState(TypedDict):
     pending_intents: list[str] | None
     # 도구 실행 결과 누적: [{"intent": str, "answer": str}]. finalize/fallback이 합성
     tool_answers: list[dict] | None
+    # 도구가 생성한 파일 목록: [{"name": str, "url": str, "tool": str}]
+    # main.py가 SSE file 이벤트로 내보낸다 (미들웨어 fetch-and-store 신호)
+    generated_files: list[dict] | None
     domain: str | None  # (예약) 과거 라우터 도메인 분류 자리 — 현재 미사용
     dense_candidates: list[dict] | None  # dense 검색 top_k개
     bm25_candidates: list[dict] | None  # bm25 검색 top_k개 (ACL 후처리 완료분)

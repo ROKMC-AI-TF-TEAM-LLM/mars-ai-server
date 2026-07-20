@@ -143,7 +143,10 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
 8. **finalize / increment_retry / fallback** — 성공 시 도구 답변(tool_answers)과
    문서 답변을 계획 순서로 합성해 확정 (코드 조립만 — verify 뒤 LLM 가공 금지),
    실패 시 MAX_VERIFY_RETRY(=1)까지 generate만 재실행 (도구는 재실행 안 함),
-   소진 시 문서 파트만 안전한 대체 답변으로 바꿔 합성
+   소진 시 문서 파트만 안전한 대체 답변으로 바꿔 합성.
+   finalize 뒤에는 남은 **후처리 도구**(POST_SEARCH_TOOLS — HWP_EXPORT 등,
+   방금 확정된 답변을 입력으로 쓰는 도구)가 순차 실행된다. fallback 경로는
+   후처리를 건너뛴다 (검증 실패 답변을 파일 등으로 만들지 않음)
 
 dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 구현 단순성을 위해 순차부터 시작한다.
