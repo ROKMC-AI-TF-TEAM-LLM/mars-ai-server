@@ -316,6 +316,24 @@ data: {"type":"done"}
 
 ### 우리 서버 문서 관리 API (9000)
 
+이 API 4종(POST/GET/DELETE /documents, GET /documents/jobs)은 **관리자 페이지**의
+데이터 소스다. 미들웨어가 관리자 권한을 확인한 뒤 프록시한다 (MARS는 자체
+인증·권한이 없다 — 내부망 신뢰).
+
+**적재 원본 관리 계약 (생성 파일 fetch-and-store와 대칭)**:
+
+- **원본의 영속 보관 주체는 미들웨어(자기 DB)다.** 관리자가 올린 문서 원본을
+  미들웨어가 사용자·업로드 이력과 매핑해 자기 저장소에 보관하고, MARS로는
+  `POST /documents`로 바이트를 relay한다.
+- **MARS는 인덱싱 엔진이자 임시 처리 공간이다.** 받은 원본을 청킹·임베딩·
+  색인(Milvus·BM25)하고, 원본은 `UPLOAD_DIR`에 스테이징한다. 색인 결과는
+  영속이지만 스테이징 원본은 임시다 (TTL 정리는 향후 도입 — roadmap 미확정).
+- **서버 재구축(Milvus 초기화) 시 재적재 원천**: 운영은 미들웨어가 원본을
+  다시 `POST /documents`로 전송, 개발은 `scripts/bulk_ingest.py`로 sample_docs
+  재적재. → MARS 로컬 원본 소실에 의존하지 않는다.
+- 에어갭 정합: 전송 방향은 항상 미들웨어→MARS 인바운드다. MARS가 미들웨어로
+  원본을 되돌려 push하지 않는다 (아웃바운드 금지, CLAUDE.md).
+
 **`POST /documents?name=...&domain=...&department=...&visibility=ALL`** — 적재/갱신
 
 - 본문: **파일 바이트 그대로** (`Content-Type: application/octet-stream`).
@@ -339,13 +357,24 @@ data: {"type":"done"}
 ```
 
 - 적재/삭제 작업은 **한 번에 하나만 실행**된다 (BM25 전체 재빌드 직렬화).
-  나머지는 순서 대기. 원본 파일은 `UPLOAD_DIR`에 보관된다
+  나머지는 순서 대기. 원본 파일은 `UPLOAD_DIR`에 **임시 스테이징**된다
+  (영속 보관은 미들웨어 — 위 "적재 원본 관리 계약" 참조)
 - 400: 파라미터 오류(형식·도메인·빈 본문), 413: 크기 초과
+
+**`GET /documents?offset=0&limit=20&domain=...`** — 적재 문서 목록 (관리 페이지용)
+
+- 응답: `{documents: [{name, type, domain, visibility, owning_department,
+  applied_at}], total, offset, limit, has_more}` (무한 스크롤, 문서명 오름차순)
+- **ACL을 적용하지 않는다** — `visibility=DEPT_ONLY` 문서의 존재(문서명·소유
+  부서)까지 노출된다. `/query`와 달리 user_department 필터가 없다
+- **미들웨어는 관리자 권한을 확인한 뒤에만 프록시할 것.** 일반 사용자 화면에
+  그대로 내보내면 DEPT_ONLY 문서명이 새어나간다
 
 **`GET /documents/jobs/{job_id}`** — 작업 상태 조회 (위와 같은 객체).
 상태 전이 `queued → running → done | error`. **인메모리 이력**이라 서버
 재시작 시 404 (적재된 청크는 유지). `GET /documents/jobs?limit=20`은
-최근 작업 목록(최신순)
+최근 작업 목록(최신순). 관리자 페이지가 진행 상태를 오래 보존해야 하면
+미들웨어가 job_id·상태를 자기 DB에 미러링하는 것을 권한다 (MARS는 인메모리)
 
 **`DELETE /documents/{name}`** — 문서 삭제 (name은 URL 인코딩)
 

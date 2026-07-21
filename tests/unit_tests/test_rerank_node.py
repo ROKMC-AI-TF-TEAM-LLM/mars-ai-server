@@ -26,9 +26,14 @@ class _FakeResponse:
         return {"scores": self._scores}
 
 
+# 테스트용 고정 임계값. 실제 .env의 RERANK_SCORE_THRESHOLD에 의존하지 않도록
+# 픽스처에서 이 값으로 고정한다 (env를 튜닝해도 테스트가 안 깨지게)
+_TEST_THRESHOLD = 0.5
+
+
 @pytest.fixture()
 def fake_services(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """리랭커 HTTP 호출과 parent_store.get_parent를 가짜로 대체한다."""
+    """리랭커 HTTP 호출·parent_store·임계값을 가짜로 고정한다."""
     calls: dict[str, Any] = {"scores": []}
 
     def fake_post(url: str, json: dict, timeout: float) -> _FakeResponse:
@@ -38,7 +43,11 @@ def fake_services(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(rerank_module.requests, "post", fake_post)
     monkeypatch.setattr(rerank_module.parent_store, "get_parent", lambda pid: _PARENTS.get(pid, ""))
-    return calls
+    # 임계값을 .env와 무관하게 고정 (env 튜닝에 테스트가 흔들리지 않게)
+    monkeypatch.setenv("RERANK_SCORE_THRESHOLD", str(_TEST_THRESHOLD))
+    get_config.cache_clear()
+    yield calls
+    get_config.cache_clear()
 
 
 def _candidate(chunk_id: str, parent_id: str, source_doc: str = "휴가규정.md") -> dict:

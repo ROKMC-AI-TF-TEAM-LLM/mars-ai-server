@@ -199,3 +199,21 @@ dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 2. document_parents에서 부모 청크 삭제
 3. indexer_graph로 재적재
 4. BM25 인덱스는 부분 삭제 불가 → **전체 재빌드** (야간 배치 전제로 설계)
+
+## 10. 적재 원본 보관 주체 (미들웨어)
+
+관리자 페이지에서 올린 문서 **원본의 영속 보관 주체는 미들웨어(자기 DB)**다.
+MARS는 인덱싱 엔진이자 임시 처리 공간이며, 생성 파일(§8 EXPORT_DIR)의
+fetch-and-store와 대칭 구조다:
+
+- 미들웨어가 원본을 사용자·업로드 이력과 매핑해 영속 저장하고, MARS로는
+  `POST /documents`로 바이트를 relay한다 (전송 방향은 항상 미들웨어→MARS
+  인바운드 — 에어갭 아웃바운드 금지와 정합)
+- MARS는 받은 원본을 청킹·임베딩·색인(Milvus·BM25)하고, 원본은 `UPLOAD_DIR`에
+  **임시 스테이징**한다. 색인 결과는 영속, 스테이징 원본은 임시(TTL 정리는
+  향후 도입 — roadmap 미확정 항목)
+- 서버 재구축(Milvus 초기화) 시 재적재 원천: 운영은 미들웨어가 원본 재전송,
+  개발은 `scripts/bulk_ingest.py`로 sample_docs 재적재. MARS 로컬 원본 소실에
+  의존하지 않는다
+- `GET /documents`(관리 목록)는 ACL을 적용하지 않아 DEPT_ONLY 문서명까지
+  노출하므로, 미들웨어가 관리자 권한 확인 후에만 프록시한다 (interfaces.md §5)

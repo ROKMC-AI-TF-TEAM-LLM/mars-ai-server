@@ -131,3 +131,7 @@
   페이지 추적 요구가 확정되면 인덱싱 스키마에 page 필드 추가 필요
 - Milvus Lite 데이터 파일 실제 경로/권한
 - 예상 동시 사용자 수 (max_num_seqs, 병렬화 여부 결정 변수)
+- UPLOAD_DIR 임시 스테이징 TTL 정리 — 원본 영속 보관을 미들웨어로 이관
+  (설계 확정, interfaces.md §"적재 원본 관리 계약"). 생성 파일 EXPORT_DIR의
+  기회적 정리(shared/exports.py)와 대칭 구조로 `UPLOAD_TTL_HOURS`(기본 24h)
+  도입 예정. 미들웨어의 원본 DB 저장이 실동작 확인되면 착수

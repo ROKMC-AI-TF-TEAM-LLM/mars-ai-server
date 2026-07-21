@@ -86,7 +86,10 @@ class Config:
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
-    # --- 문서 업로드 저장 경로 (POST /documents가 받은 파일 원본 보관) ---
+    # --- 문서 업로드 임시 스테이징 경로 (POST /documents가 받은 파일 원본) ---
+    # 원본의 영속 보관 주체는 미들웨어(자기 DB)다. MARS는 청킹·임베딩·색인만
+    # 한다. 여기 스테이징된 로컬 원본의 TTL 정리는 향후 도입 예정
+    # (계획: docs/roadmap.md 미확정 항목 — UPLOAD_TTL_HOURS)
     UPLOAD_DIR: str = "./data/uploads"
 
     # --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
