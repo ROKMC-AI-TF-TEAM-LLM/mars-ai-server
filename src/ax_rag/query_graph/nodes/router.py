@@ -34,6 +34,7 @@ from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
 from ax_rag.query_graph.tools import (
     DOC_SEARCH,
+    POST_SEARCH_TOOLS,
     TERMINAL_ONLY_TOOLS,
     TOOL_DESCRIPTIONS,
     TOOL_MATCHERS,
@@ -66,6 +67,35 @@ _MATCHER_ONLY_MAX_CHARS = 30
 _SEARCH_HINT_RE = re.compile(
     r"찾아|검색|알아보|알려주|조사|조회|정리|요약|참고|바탕으로|근거로|기반으로"
 )
+
+# 검색 쿼리 오염 제거: 계획이 [검색 + 파일 도구]일 때 재작성 쿼리에 남은
+# 파일 생성 요청 표현을 결정적으로 걷어낸다. 실측: "해병대 관련 내용을
+# 조사하여 문서로 만들어줘"는 리랭크 최고점 0.022(전멸), "해병대 관련 내용"은
+# 0.738 — 도구 표현이 점수를 30배 붕괴시킨다. 프롬프트 지시만으로는 7B가
+# 재작성에서 요청 표현을 못 떼는 경우가 있어 코드로 보강한다
+_FILE_REQUEST_RE = re.compile(
+    r"(이\s*답변\s*[을를]?\s*)?(한글\s*)?(문서|파일)\s*(로|[을를])?\s*"
+    r"(만들|생성|저장|내보내|출력|뽑|변환)\w*|문서화\s*해?\w*"
+)
+# 파일 표현 제거 후 끝에 남는 검색 동사 꼬리("...을 조사하여")도 정리한다
+_TRAILING_SEARCH_VERB_RE = re.compile(r"[을를]?\s*(조사|조회|검색|정리|요약|알아보|찾아)\w*\s*$")
+
+
+def _strip_file_phrases(query: str) -> str:
+    """검색 쿼리에서 파일 생성 요청 표현과 꼬리 동사를 제거한다.
+
+    제거 결과가 너무 짧으면(검색어 실종) 원본을 유지한다 — 오염된 쿼리라도
+    없는 것보다는 낫다.
+    """
+    cleaned = _FILE_REQUEST_RE.sub(" ", query)
+    if cleaned == query:
+        return query  # 파일 요청 표현이 없으면 손대지 않는다 (순수 검색어 보존)
+    # 파일 표현을 걷어낸 자리에 남은 검색 동사 꼬리("…을 조사하여")를 정리한다
+    cleaned = _TRAILING_SEARCH_VERB_RE.sub(" ", cleaned)
+    # 끝에 남은 접속 어미·조사만 정리 (명사 일부를 깎지 않게 정확 일치로)
+    cleaned = re.sub(r"(하고|하여|해서|[을를])\s*$", "", cleaned.strip())
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.~")
+    return cleaned if len(cleaned) >= 2 else query
 
 
 class ClassifyAndRewrite(BaseModel):
@@ -115,9 +145,15 @@ def _normalize_plan(raw_intents: list, matched: list[str]) -> list[str]:
 
 
 def _route_result(question: str, plan: list[str], retry_count: int) -> dict:
-    """route 반환 dict. intent는 계획의 대표값(첫 항목, 로그·하위 호환용)."""
+    """route 반환 dict. intent는 계획의 대표값(첫 항목, 로그·하위 호환용).
+
+    계획이 [검색 + 파일 도구] 복합이면 검색 쿼리의 파일 요청 표현을 정리한다.
+    """
+    rewritten = question
+    if DOC_SEARCH in plan and any(name in POST_SEARCH_TOOLS for name in plan):
+        rewritten = _strip_file_phrases(question)
     return {
-        "rewritten_query": question,
+        "rewritten_query": rewritten,
         "intents": plan,
         "pending_intents": execution_queue(plan),
         "intent": plan[0],
@@ -201,6 +237,11 @@ def route(state: QueryState) -> dict:
             if not raw_intents and args.get("intent"):
                 raw_intents = [args["intent"]]  # 단수형 응답 수용 (7B 허용 오차)
             plan = _normalize_plan(raw_intents, matched)
+
+        if DOC_SEARCH in plan and any(name in POST_SEARCH_TOOLS for name in plan):
+            # LLM이 재작성에서 파일 요청 표현을 못 뗀 경우 코드로 정리 (실측:
+            # "…문서로 만들어줘"가 남으면 리랭크 점수 30배 붕괴 → 검색 전멸)
+            rewritten = _strip_file_phrases(rewritten)
 
         logger.info(
             "라우팅: 계획=%s%s, rewritten=%s",

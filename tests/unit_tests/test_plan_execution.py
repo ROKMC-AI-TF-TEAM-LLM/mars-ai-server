@@ -117,6 +117,43 @@ def test_route_긴_질문은_매처_히트여도_LLM을_태우고_병합한다(
     assert result["pending_intents"] == ["DISCHARGE_DAYS", "DOC_SEARCH"]
 
 
+@pytest.mark.parametrize(
+    ("polluted", "expected"),
+    [
+        ("해병대 관련 내용을 조사하여 문서로 만들어줘", "해병대 관련 내용"),
+        ("휴가 규정 찾아서 파일로 만들어줘", "휴가 규정"),
+        ("탄약 훈령 요약해서 한글 파일로 저장해줘", "탄약 훈령"),
+        ("위 내용을 문서화해줘", "위 내용"),
+        ("휴가 제도", "휴가 제도"),  # 파일 표현 없으면 그대로 (명사 "제도" 보존)
+        ("문서 검색해줘", "문서 검색해줘"),  # "문서"만으로는 제거 안 함
+    ],
+)
+def test_strip_file_phrases_파일요청_표현을_걷어낸다(polluted: str, expected: str) -> None:
+    """실측: 재작성 쿼리에 '문서로 만들어줘'가 남으면 리랭크 점수가 30배
+    붕괴(0.738→0.022)해 검색이 전멸한다. 결정적 정리로 검색어만 남긴다."""
+    assert router_module._strip_file_phrases(polluted) == expected
+
+
+def test_strip_file_phrases_전부_제거되면_원본_유지() -> None:
+    """검색어가 실종될 정도로 깎이면 오염된 원본이라도 유지한다 (빈 쿼리 방지)."""
+    assert router_module._strip_file_phrases("문서로 만들어줘") == "문서로 만들어줘"
+
+
+def test_route_검색_파일_복합계획이면_쿼리를_정리한다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM이 재작성에서 파일 요청 표현을 못 뗀 경우 코드가 정리한다."""
+    fake = _FakeLLM(
+        _classify_response(
+            "해병대 관련 내용을 조사하여 문서로 만들어줘", ["DOC_SEARCH", "HWP_EXPORT"]
+        )
+    )
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": "해병대 관련 내용을 조사하고 문서를 만들어줘"})
+    assert result["intents"] == ["DOC_SEARCH", "HWP_EXPORT"]
+    assert result["rewritten_query"] == "해병대 관련 내용"  # 오염 제거됨
+
+
 def test_HWP_EXPORT_설명은_한글없는_문서표현도_포함한다() -> None:
     """라우터 프롬프트 계약: '문서 만들어줘'(한글 없음)도 HWP_EXPORT로 분류되게
     설명이 '한글'에 얽매이지 않아야 한다 (실측: 좁은 설명이라 복합 의도 유실)."""

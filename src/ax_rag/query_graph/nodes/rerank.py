@@ -40,6 +40,13 @@ def rerank(state: QueryState) -> dict:
 
     ranked = sorted(zip(candidates, scores, strict=True), key=lambda pair: pair[1], reverse=True)
 
+    # 점수 분포 로그 — 임계값 튜닝·전멸 원인 진단용 (상위 5건: 점수 문서명)
+    logger.info(
+        "리랭크 점수 분포 (query=%s): %s",
+        query[:40],
+        ", ".join(f"{s:.3f} {c['source_doc'][:20]}" for c, s in ranked[:5]),
+    )
+
     retrieved_chunks: list[dict] = []
     seen_parent_ids: set[str] = set()
     for candidate, score in ranked:
