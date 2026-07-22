@@ -63,6 +63,12 @@ class VerifyAnswer(BaseModel):
 
 # 수치(날짜 구성 요소 포함): 1,000 / 15 / 2026 / 3.5 등
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+# 서식용 목록 번호: 줄 시작의 "1. " / "2) " / "### 3. " / "**1. " (마크다운 헤더·볼드 포함).
+# LLM이 정리형 답변에 붙이는 번호는 사실 주장이 아니므로 수치 검사에서 제외한다
+# — 근거에 숫자가 없는 산문이면 목록 번호만으로 탈락하는 오탐 실측. 업계 관행
+# (RAGAS 등 클레임 분해 방식)도 서식 숫자를 주장으로 취급하지 않는다.
+# 2자리 상한: "2026." 같은 연도(4자리)는 서식으로 오인하지 않고 계속 검사한다
+_LIST_NUMBERING_RE = re.compile(r"(?m)^\s*(?:#{1,6}\s*)?(?:\*{1,2})?\d{1,2}[.)]\s")
 # 문서명: 확장자를 가진 파일명 패턴
 _DOCNAME_RE = re.compile(
     r"[0-9A-Za-z가-힣_\-.]+\.(?:pdf|docx|doc|hwp|hwpx|md|txt|xlsx|pptx)", re.IGNORECASE
@@ -88,9 +94,13 @@ def rule_based_verify(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[
     )
     corpus_normalized = _normalize_numbers(corpus)
 
+    # 목록 번호(서식)는 검사 대상 텍스트에서만 걷어낸다 — 답변 본문 속 수치는
+    # 전수 검사 유지 (fail-closed). 원문(draft_answer)은 변경하지 않는다
+    draft_for_numbers = _LIST_NUMBERING_RE.sub("", draft_answer)
+
     # 부분 문자열 검사라 "150"이 "1500"에 매칭되는 근사치이지만,
     # 근거에 아예 없는 수치/날짜(예: 지어낸 "3년")는 확실히 걸러낸다
-    for number in _NUMBER_RE.findall(draft_answer):
+    for number in _NUMBER_RE.findall(draft_for_numbers):
         if _normalize_numbers(number) not in corpus_normalized:
             return False, f"근거에 없는 수치/날짜: {number}"
 
