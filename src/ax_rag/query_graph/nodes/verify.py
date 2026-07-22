@@ -23,7 +23,7 @@ from ax_rag.query_graph.prompts import (
 )
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
-from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_DESCRIPTIONS
+from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_HANDLED_LABELS
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
@@ -43,7 +43,10 @@ def _tool_handled_note(state: QueryState) -> str:
     ]
     if not handled:
         return ""
-    lines = "\n".join(f"- {TOOL_DESCRIPTIONS.get(name, name)}" for name in handled if name)
+    # 라우터용 상세 설명(TOOL_DESCRIPTIONS)이 아니라 예시 없는 짧은 라벨을 쓴다
+    # — 분류 예시 문구("해병대 조사해서 문서로 만들어줘")가 안내문에 실리면
+    # 7B 검증기가 답변 내용으로 착각해 grounded=false 오탐을 낸다 (실측)
+    lines = "\n".join(f"- {TOOL_HANDLED_LABELS.get(name, name)}" for name in handled if name)
     return VERIFY_TOOL_HANDLED_TEMPLATE.format(handled=lines)
 
 

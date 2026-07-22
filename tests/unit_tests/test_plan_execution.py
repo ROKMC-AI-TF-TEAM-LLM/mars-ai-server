@@ -166,6 +166,18 @@ def test_HWP_EXPORT_설명은_한글없는_문서표현도_포함한다() -> Non
     assert "HWP_EXPORT" in ROUTER_SYSTEM_PROMPT  # 프롬프트에 실제 반영
 
 
+def test_TOOL_HANDLED_LABELS는_전_도구를_예시없이_커버한다() -> None:
+    """generate/verify 안내문 계약: 라우터용 예시 문구가 안내문에 실리면 7B
+    검증기가 답변 내용으로 착각해 grounded=false 오탐 (실측: '해병대 조사해서
+    문서로 만들어줘' 예시가 실제 질문 주제와 겹칠 때). 라벨은 예시 금지."""
+    from ax_rag.query_graph.tools import TOOL_HANDLED_LABELS, TOOL_NODES
+
+    for name in TOOL_NODES:
+        assert name in TOOL_HANDLED_LABELS  # 새 도구 등록 시 라벨도 필수
+    for label in TOOL_HANDLED_LABELS.values():
+        assert "예:" not in label and "만들어줘" not in label and "줘" not in label
+
+
 @pytest.mark.parametrize(
     "question",
     [
@@ -345,7 +357,7 @@ def test_generate는_도구가_처리한_요청을_답하지_말라고_안내한
     )
     user_text = fake.captured_messages[-1].content
     assert "답하지 말고" in user_text  # 중복 답변 방지 안내 존재
-    assert "전역" in user_text  # 도구 유형 설명(TOOL_DESCRIPTIONS) 포함
+    assert "전역" in user_text  # 도구 유형 라벨(TOOL_HANDLED_LABELS) 포함
     assert (
         "D-140" not in user_text and "140일" not in user_text
     )  # 수치는 미포함 (규칙 검증 오탐 방지)

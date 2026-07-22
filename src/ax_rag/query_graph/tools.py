@@ -60,6 +60,18 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "기존 답변을 그대로 저장하는 건 HWP_EXPORT)",
 }
 
+# generate/verify의 "도구가 처리함" 안내문(tool_handled_note)용 짧은 라벨.
+# TOOL_DESCRIPTIONS(라우터용)를 그대로 쓰면 안 된다 — 분류용 예시 문구
+# ("해병대 조사해서 문서로 만들어줘")를 7B 검증기가 답변 내용으로 착각해
+# grounded=false 오탐을 낸다 (실측: 예시 주제가 실제 질문과 겹칠 때).
+# 예시·질문형 문구 없이 요청 유형만 서술한다
+TOOL_HANDLED_LABELS: dict[str, str] = {
+    "SMALLTALK": "잡담·인사 응대",
+    "DISCHARGE_DAYS": "전역일·남은 날짜 계산",
+    "HWP_EXPORT": "답변·검색 결과를 한글(HWPX) 문서 파일로 저장",
+    "HWP_DRAFT": "사용자 제공 내용으로 문서 초안 작성 및 파일 생성",
+}
+
 
 # 결정적 매처: LLM 분류 전에 코드로 판정한다 (intent 값 → 판정 함수).
 # 매치되면 라우터가 LLM 호출 없이 즉시 해당 도구로 보낸다 — 빠르고 오분류 없음

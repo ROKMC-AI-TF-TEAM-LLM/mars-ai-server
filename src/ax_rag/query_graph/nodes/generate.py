@@ -17,7 +17,7 @@ from ax_rag.query_graph.prompts import (
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
-from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_DESCRIPTIONS
+from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_HANDLED_LABELS
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -42,7 +42,9 @@ def _tool_handled_note(state: QueryState) -> str:
     ]
     if not handled:
         return ""
-    lines = "\n".join(f"- {TOOL_DESCRIPTIONS.get(name, name)}" for name in handled if name)
+    # 라우터용 상세 설명(TOOL_DESCRIPTIONS)이 아니라 예시 없는 짧은 라벨을 쓴다
+    # — 분류 예시 문구가 안내문에 실리면 7B가 답변 내용으로 착각한다 (실측)
+    lines = "\n".join(f"- {TOOL_HANDLED_LABELS.get(name, name)}" for name in handled if name)
     return GENERATE_TOOL_HANDLED_TEMPLATE.format(handled=lines)
 
 
