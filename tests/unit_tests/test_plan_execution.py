@@ -117,6 +117,18 @@ def test_route_긴_질문은_매처_히트여도_LLM을_태우고_병합한다(
     assert result["pending_intents"] == ["DISCHARGE_DAYS", "DOC_SEARCH"]
 
 
+def test_HWP_EXPORT_설명은_한글없는_문서표현도_포함한다() -> None:
+    """라우터 프롬프트 계약: '문서 만들어줘'(한글 없음)도 HWP_EXPORT로 분류되게
+    설명이 '한글'에 얽매이지 않아야 한다 (실측: 좁은 설명이라 복합 의도 유실)."""
+    from ax_rag.query_graph.nodes.router import ROUTER_SYSTEM_PROMPT
+    from ax_rag.query_graph.tools import TOOL_DESCRIPTIONS
+
+    desc = TOOL_DESCRIPTIONS["HWP_EXPORT"]
+    assert "문서로 만들어줘" in desc  # 한글 없는 표현 포함
+    assert "DOC_SEARCH, HWP_EXPORT" in desc  # 검색+저장 복합 예시
+    assert "HWP_EXPORT" in ROUTER_SYSTEM_PROMPT  # 프롬프트에 실제 반영
+
+
 @pytest.mark.parametrize(
     "question",
     [
