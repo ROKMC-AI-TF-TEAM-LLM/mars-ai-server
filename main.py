@@ -49,15 +49,40 @@ from ax_rag.shared.logging_setup import get_logger, setup_logging
 setup_logging()
 logger = get_logger("main")
 
+# Swagger UI 그룹핑용 태그 (목적별 분류). 각 엔드포인트의 tags=와 이름을 맞춘다
+_OPENAPI_TAGS = [
+    {
+        "name": "질의응답",
+        "description": "사용자 질문 처리(SSE 스트리밍)와 요청에 넣을 수 있는 "
+        "domain·tool 값 조회. 미들웨어의 채팅 경로.",
+    },
+    {
+        "name": "문서 관리",
+        "description": "RAG 문서 적재·갱신·목록·삭제와 적재 작업 상태. 관리자 "
+        "페이지 데이터 소스(미들웨어가 관리자 권한 확인 후 프록시). "
+        "상세 연동은 docs/middleware_document_ingest.md 참조.",
+    },
+    {
+        "name": "생성 파일",
+        "description": "도구(HWP_EXPORT 등)가 만든 문서 파일 다운로드. 미들웨어가 "
+        "SSE file 이벤트를 신호로 가져가 자체 저장(fetch-and-store).",
+    },
+    {
+        "name": "운영",
+        "description": "서버·의존 서비스 상태 점검 (모니터링용).",
+    },
+]
+
 app = FastAPI(
     title="A.X RAG 서버",
     version="0.1.0",
     description=(
-        "사내 업무 문서 검색 챗봇 API (미들웨어 연동용).\n\n"
+        "군 내부 문서 검색 챗봇 MARS API (미들웨어 연동용).\n\n"
         "- 응답은 **SSE(text/event-stream) 스트리밍** — 이벤트 계약은 `POST /query` 문서 참조\n"
         "- 로컬 서비스 4종(vLLM :8000, 임베딩 :8001, 리랭커 :8002, Milvus)이 기동되어 있어야 한다\n"
         "- 상세 스펙: docs/interfaces.md §5"
     ),
+    openapi_tags=_OPENAPI_TAGS,
 )
 
 # 브라우저 프론트가 직접 붙는 개발/데모용 CORS 허용.
@@ -388,6 +413,7 @@ async def _run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIt
 
 @app.get(
     "/health",
+    tags=["운영"],
     summary="헬스체크",
     description=(
         "기본은 서버 생존 확인만 한다 (빠름, 모델 상태 미검사).\n\n"
@@ -412,7 +438,7 @@ def health(
     return check_dependencies()
 
 
-@app.get("/capabilities", summary="사용 가능한 domain·tool 목록")
+@app.get("/capabilities", tags=["질의응답"], summary="사용 가능한 domain·tool 목록")
 def capabilities() -> dict:
     """POST /query의 domain·tool 필드에 넣을 수 있는 값 목록 (프론트 UI 데이터 소스).
 
@@ -485,6 +511,7 @@ class DocumentListOutput(BaseModel):
 
 @app.get(
     "/documents",
+    tags=["문서 관리"],
     response_model=DocumentListOutput,
     summary="적재 문서 목록 (무한 스크롤)",
     description=(
@@ -645,6 +672,7 @@ def _run_ingest_job(job_id: str, path: Path, domain: str, department: str, visib
 
 @app.post(
     "/documents",
+    tags=["문서 관리"],
     status_code=202,
     response_model=IngestJobStatus,
     summary="문서 적재/갱신 (백그라운드)",
@@ -739,6 +767,7 @@ async def upload_document(
 
 @app.get(
     "/documents/jobs",
+    tags=["문서 관리"],
     response_model=list[IngestJobStatus],
     summary="최근 적재 작업 목록",
     description=(
@@ -754,6 +783,7 @@ def list_ingest_jobs(
 
 @app.get(
     "/documents/jobs/{job_id}",
+    tags=["문서 관리"],
     response_model=IngestJobStatus,
     summary="적재 작업 상태 조회",
     description=(
@@ -774,6 +804,7 @@ def get_ingest_job(job_id: str) -> IngestJobStatus:
 
 @app.delete(
     "/documents/{name}",
+    tags=["문서 관리"],
     response_model=DocumentDeleteOutput,
     summary="문서 삭제",
     description=(
@@ -808,6 +839,7 @@ def delete_document(
 
 @app.get(
     "/files/{name}",
+    tags=["생성 파일"],
     summary="생성 문서 다운로드",
     description=(
         "도구가 생성한 문서 파일(HWPX 등)을 내려받는다.\n\n"
@@ -869,7 +901,9 @@ _QUERY_RESPONSES = {
 }
 
 
-@app.post("/query", summary="질의응답 (SSE 스트리밍)", responses=_QUERY_RESPONSES)
+@app.post(
+    "/query", tags=["질의응답"], summary="질의응답 (SSE 스트리밍)", responses=_QUERY_RESPONSES
+)
 async def query(request: QueryRequest, http_request: Request) -> StreamingResponse:
     """질의응답 파이프라인을 완주한 뒤 확정 답변을 SSE로 분할 전송한다.
 
