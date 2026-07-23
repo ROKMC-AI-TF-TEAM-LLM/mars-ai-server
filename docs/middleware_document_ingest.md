@@ -66,7 +66,8 @@ Body: <파일 바이트 그대로>
   | `domain` | O | `HR` `TECH` `FINANCE_LEGAL` `GENERAL` `MANUAL` `DIRECTIVE` 중 하나 (엄격 검증) |
   | `department` | 조건부 | `visibility=DEPT_ONLY`면 필수 (소유 부서 코드) |
   | `visibility` | X | `ALL`(기본) \| `DEPT_ONLY` |
-- **지원 형식**: `.md` `.txt` `.pdf` (UTF-8 텍스트, 스캔본 PDF는 실패). 최대 50MB
+- **지원 형식**: `.md` `.txt` `.pdf` (텍스트 인코딩 UTF-8·UTF-8 BOM·CP949 자동
+  인식, 스캔본 PDF는 실패). 최대 50MB
 - **갱신**: 같은 `name`이 이미 있으면 기존 청크 삭제 후 재적재
 - **응답 202** + 작업(job) 객체. 적재는 오래 걸려(CPU 문서당 수 분) 백그라운드
   실행. 아래 `job_id`로 진행 상태 폴링:
