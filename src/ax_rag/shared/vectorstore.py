@@ -167,8 +167,16 @@ def list_documents() -> list[dict]:
     return sorted(documents.values(), key=lambda d: d["source_doc"])
 
 
+def delete_by_filter(collection_name: str, expr: str) -> int:
+    """필터 식에 걸리는 행을 삭제하고 건수를 반환한다 (부모 컬렉션도 함께 사용).
+
+    pymilvus 버전에 따라 delete가 dict(delete_count) 또는 삭제된 PK 목록을
+    반환해서, 두 형태를 모두 건수로 정규화한다.
+    """
+    result = get_client().delete(collection_name, filter=expr)
+    return int(result["delete_count"]) if isinstance(result, dict) else len(result)
+
+
 def delete_by_source_doc(source_doc: str) -> int:
     """특정 문서의 자식 청크를 전부 삭제한다 (문서 갱신용). 삭제 건수 반환."""
-    client = get_client()
-    result = client.delete(get_collection(), filter=f'source_doc == "{source_doc}"')
-    return int(result["delete_count"]) if isinstance(result, dict) else len(result)
+    return delete_by_filter(get_collection(), f'source_doc == "{source_doc}"')

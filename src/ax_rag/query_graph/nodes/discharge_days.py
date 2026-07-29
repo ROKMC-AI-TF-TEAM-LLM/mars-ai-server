@@ -12,6 +12,7 @@ import re
 from datetime import date
 
 from ax_rag.query_graph.state import QueryState
+from ax_rag.query_graph.tool_contract import tool_answer
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -97,4 +98,4 @@ def discharge_days(state: QueryState) -> dict:
     """전역일 D-day 계산. 문서 근거를 주장하지 않으므로 grounded=False."""
     answer = build_answer(state["question"], state.get("conversation_history") or [], date.today())
     logger.info("전역일 계산: %s", answer[:60])
-    return {"final_answer": answer, "grounded": False, "retrieved_chunks": []}
+    return tool_answer(answer)

@@ -12,15 +12,10 @@
 from __future__ import annotations
 
 import re
-import urllib.parse
-import uuid
-from datetime import datetime
-from pathlib import Path
 
 from ax_rag.query_graph.state import QueryState
-from ax_rag.shared.config import get_config
-from ax_rag.shared.exports import cleanup_expired_exports
-from ax_rag.shared.hwpx_writer import write_hwpx
+from ax_rag.query_graph.tool_contract import tool_answer
+from ax_rag.shared.exports import save_export_document
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -68,34 +63,24 @@ def hwp_export(state: QueryState) -> dict:
     if not answer_text:
         answer_text = _last_assistant_answer(state.get("conversation_history") or [])
     if not answer_text:
-        return {"final_answer": NO_CONTENT_ANSWER, "grounded": False, "retrieved_chunks": []}
+        return tool_answer(NO_CONTENT_ANSWER)
 
-    cleanup_expired_exports()  # 기회적 정리: 새 파일을 만드는 시점에 만료분 삭제
-
-    # 같은 초에 여러 건이 생성돼도 충돌하지 않도록 무작위 접미사를 붙인다 (실측)
-    filename = f"MARS_답변_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.hwpx"
     try:
-        path = write_hwpx(
+        file_info = save_export_document(
             title="MARS 답변 문서",
             body=answer_text,
-            out_path=Path(get_config().EXPORT_DIR) / filename,
+            filename_prefix="MARS_답변",
+            tool="HWP_EXPORT",
         )
     except Exception:
         logger.exception("HWPX 생성 실패")
-        return {"final_answer": EXPORT_FAIL_ANSWER, "grounded": False, "retrieved_chunks": []}
+        return tool_answer(EXPORT_FAIL_ANSWER)
 
-    logger.info("HWPX 생성: %s (%d바이트)", path.name, path.stat().st_size)
-    file_url = f"/files/{urllib.parse.quote(filename)}"
     intro = "위 답변을" if from_current_answer else "직전 답변을"
     final_answer = (
         f"{intro} 한글 문서(HWPX)로 만들었습니다.\n\n"
-        f"- 파일명: {filename}\n"
+        f"- 파일명: {file_info['name']}\n"
         "한글 2014 이상에서 열 수 있습니다."
     )
-    return {
-        "final_answer": final_answer,
-        "grounded": False,
-        "retrieved_chunks": [],
-        # SSE file 이벤트 재료 (미들웨어가 텍스트 파싱 없이 감지)
-        "generated_files": [{"name": filename, "url": file_url, "tool": "HWP_EXPORT"}],
-    }
+    # file_info는 SSE file 이벤트 재료 (미들웨어가 텍스트 파싱 없이 감지)
+    return tool_answer(final_answer, generated_files=[file_info])

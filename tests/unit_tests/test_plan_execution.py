@@ -334,6 +334,50 @@ def test_fallback은_도구_답변을_유지하고_문서_파트만_대체한다
     )
 
 
+# ---------- fallback: 도메인 한정 검색 안내 ----------
+
+
+def test_도메인_한정_검색에서_근거_0건이면_범위를_알려준다() -> None:
+    """실측: 훈령(DIRECTIVE) 한정 상태로 휴가를 물으면 근거가 0건이 된다
+    (휴가규정.md는 HR 적재). "문서가 없다"가 아니라 "이 범위에 없다"로 안내해야
+    사용자가 범위를 좁혀둔 걸 알아챈다."""
+    answer = fallback({"requested_domain": "DIRECTIVE", "retrieved_chunks": []})["final_answer"]
+    assert "훈령" in answer  # DOMAIN_LABELS의 한글 라벨
+    assert "전체" in answer  # 조치 안내
+    assert answer != FALLBACK_ANSWER
+
+
+def test_도메인_한정이어도_근거가_있었으면_기본_문구다() -> None:
+    """근거는 찾았는데 검증에서 떨어진 경우(지어낸 수치 등)는 범위 탓이 아니다.
+    범위를 탓하면 엉뚱한 원인을 안내하게 된다."""
+    state = {
+        "requested_domain": "DIRECTIVE",
+        "retrieved_chunks": [{"text": "본문", "source_doc": "훈령.pdf"}],
+    }
+    assert fallback(state)["final_answer"] == FALLBACK_ANSWER
+
+
+def test_도메인_한정이_없으면_기본_문구다() -> None:
+    assert fallback({"retrieved_chunks": []})["final_answer"] == FALLBACK_ANSWER
+    assert (
+        fallback({"requested_domain": "", "retrieved_chunks": []})["final_answer"]
+        == FALLBACK_ANSWER
+    )
+
+
+def test_도메인_한정_안내도_도구_답변을_유지한다() -> None:
+    """범위 안내로 바뀌어도 도구 답변(결정적 산출물) 합성은 그대로다."""
+    state = {
+        "intents": ["DISCHARGE_DAYS", "DOC_SEARCH"],
+        "tool_answers": _TOOL_ANSWERS,
+        "requested_domain": "MANUAL",
+        "retrieved_chunks": [],
+    }
+    answer = fallback(state)["final_answer"]
+    assert answer.startswith("전역일까지 D-100, 100일 남았습니다.\n\n")
+    assert "교범" in answer  # MANUAL의 한글 라벨
+
+
 # ---------- generate: 도구 처리분 중복 답변 방지 ----------
 
 

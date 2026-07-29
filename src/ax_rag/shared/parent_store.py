@@ -9,12 +9,10 @@ from __future__ import annotations
 
 from pymilvus import DataType
 
-from ax_rag.shared.vectorstore import get_client
+from ax_rag.shared.vectorstore import delete_by_filter, get_client
 
-# 컬렉션 이름은 스펙 고정 (interfaces.md §2)
 PARENT_COLLECTION = "document_parents"
 
-# Milvus 제약(벡터 필드 필수) 회피용 더미 벡터. 검색에 사용하지 않는다
 _DUMMY_DIM = 2
 _DUMMY_VECTOR = [0.0, 0.0]
 
@@ -68,6 +66,4 @@ def get_parent(parent_id: str) -> str:
 
 def delete_by_source_doc(source_doc: str) -> int:
     """특정 문서의 부모 청크를 전부 삭제한다 (문서 갱신용). 삭제 건수 반환."""
-    client = get_client()
-    result = client.delete(get_parent_collection(), filter=f'source_doc == "{source_doc}"')
-    return int(result["delete_count"]) if isinstance(result, dict) else len(result)
+    return delete_by_filter(get_parent_collection(), f'source_doc == "{source_doc}"')

@@ -1,8 +1,10 @@
 """도구 레지스트리: intent 값 → 처리 노드 (code_guide.md §12 패턴 B의 구현).
 
 커스텀 도구 추가 절차:
-1) nodes/<도구>.py 작성 — smalltalk과 동일 계약:
-   state를 받아 {"final_answer", "grounded": False, "retrieved_chunks": []} 반환
+1) nodes/<도구>.py 작성 — smalltalk과 동일 계약: state를 받아
+   tool_contract.tool_answer(답변)의 반환값을 그대로 돌려준다
+   (반환 dict를 손으로 적지 말 것 — grounded 누락 시 검증 실패 답변에
+   출처가 붙는다. 파일을 만드는 도구는 generated_files 인자를 함께 넘긴다)
 2) 아래 TOOL_NODES에 노드 등록 + TOOL_DESCRIPTIONS에 분류 기준 한 줄
 3) (선택) 결정적으로 감지 가능한 도구면 TOOL_MATCHERS에 매처 등록 —
    LLM 분류보다 먼저 코드로 판정해 오분류·지연을 없앤다
@@ -28,6 +30,7 @@ from ax_rag.query_graph.nodes.discharge_days import discharge_days, is_discharge
 from ax_rag.query_graph.nodes.hwp_draft import hwp_draft
 from ax_rag.query_graph.nodes.hwp_export import hwp_export, is_hwp_export_request
 from ax_rag.query_graph.nodes.smalltalk import smalltalk
+from ax_rag.query_graph.state import QueryState
 
 # 기본 경로: 문서 검색 파이프라인 (도구 아님)
 DOC_SEARCH = "DOC_SEARCH"
@@ -119,6 +122,59 @@ POST_SEARCH_TOOLS: frozenset[str] = frozenset({"HWP_EXPORT"})
 def valid_intents() -> tuple[str, ...]:
     """허용되는 intent 값 전체 (기본 경로 + 등록된 도구)."""
     return (DOC_SEARCH, *TOOL_NODES)
+
+
+def format_handled_note(state: QueryState, template: str) -> str:
+    """도구가 담당한 요청 유형을 안내하는 꼬리 프롬프트를 만든다 (generate/verify 공용).
+
+    이미 실행된 전처리 도구(tool_answers)뿐 아니라 **아직 실행 전인 후처리
+    도구**(계획 속 POST_SEARCH_TOOLS — 파일 저장 등)도 포함한다:
+    - generate: 빠뜨리면 "그 기능은 제공하지 않는다" 같은 잘못된 사족을 붙인다 (실측)
+    - verify: 빠뜨리면 답변이 도구 몫을 안 다뤘다고 grounded=false 오탐을 낸다 (실측)
+
+    도구 답변의 수치는 넣지 않는다 — 초안에 섞이면 rule_based_verify가
+    "근거에 없는 수치"로 오탐한다. 라우터용 상세 설명(TOOL_DESCRIPTIONS)이
+    아니라 예시 없는 짧은 라벨(TOOL_HANDLED_LABELS)을 쓰는 이유도 같다:
+    분류 예시 문구가 안내문에 실리면 7B가 답변 내용으로 착각한다 (실측).
+
+    담당 도구가 없으면 빈 문자열 (안내문 자체를 붙이지 않는다).
+    """
+    handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
+    handled += [
+        name
+        for name in (state.get("intents") or [])
+        if name in POST_SEARCH_TOOLS and name not in handled
+    ]
+    if not handled:
+        return ""
+    lines = "\n".join(f"- {TOOL_HANDLED_LABELS.get(name, name)}" for name in handled if name)
+    return template.format(handled=lines)
+
+
+def plan_of(state: QueryState) -> list[str]:
+    """상태에서 처리 계획(intents)을 읽는다. 구형 단일 intent 상태도 허용한다 (방어적).
+
+    route가 항상 intents를 채우지만, 계획 이전 형태의 상태(대표 intent만 있는
+    입력·테스트 픽스처)로도 그래프가 진행되게 한다. 미지의 intent 값은
+    DOC_SEARCH로 떨어뜨린다 — 존재하지 않는 노드로 분기하지 않기 위해서다.
+    """
+    plan = state.get("intents")
+    if plan:
+        return list(plan)
+    intent = state.get("intent") or DOC_SEARCH
+    return [intent if intent in valid_intents() else DOC_SEARCH]
+
+
+def resolve_pending(state: QueryState) -> list[str]:
+    """남은 실행 큐(pending_intents)를 읽는다. 없으면 계획에서 재구성한다 (방어적).
+
+    그래프 분기(graph.next_step)와 진행 상태 안내(stages.status_after_node)가
+    같은 큐 해석을 쓰도록 한 곳에 모은다.
+    """
+    pending = state.get("pending_intents")
+    if pending is None:  # 구형 상태: 계획에서 실행 큐를 재구성
+        return execution_queue(plan_of(state))
+    return list(pending)
 
 
 def execution_queue(plan: list[str]) -> list[str]:

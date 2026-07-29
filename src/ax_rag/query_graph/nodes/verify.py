@@ -23,31 +23,11 @@ from ax_rag.query_graph.prompts import (
 )
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
-from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_HANDLED_LABELS
+from ax_rag.query_graph.tools import format_handled_note
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
-
-
-def _tool_handled_note(state: QueryState) -> str:
-    """복합 계획에서 도구가 처리한 요청 유형을 verify 판정 범위에서 제외하는 안내.
-
-    도구 답변의 수치는 넣지 않는다 (검증 기준 오염 방지) — 유형 설명만 전달한다.
-    """
-    handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
-    handled += [
-        name
-        for name in (state.get("intents") or [])
-        if name in POST_SEARCH_TOOLS and name not in handled
-    ]
-    if not handled:
-        return ""
-    # 라우터용 상세 설명(TOOL_DESCRIPTIONS)이 아니라 예시 없는 짧은 라벨을 쓴다
-    # — 분류 예시 문구("해병대 조사해서 문서로 만들어줘")가 안내문에 실리면
-    # 7B 검증기가 답변 내용으로 착각해 grounded=false 오탐을 낸다 (실측)
-    lines = "\n".join(f"- {TOOL_HANDLED_LABELS.get(name, name)}" for name in handled if name)
-    return VERIFY_TOOL_HANDLED_TEMPLATE.format(handled=lines)
 
 
 class VerifyAnswer(BaseModel):
@@ -132,7 +112,7 @@ def verify(state: QueryState) -> dict:
                         question=state["question"],
                         draft_answer=draft,
                     )
-                    + _tool_handled_note(state)
+                    + format_handled_note(state, VERIFY_TOOL_HANDLED_TEMPLATE)
                 ),
             ],
             VerifyAnswer,

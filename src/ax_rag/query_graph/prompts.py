@@ -141,6 +141,16 @@ FALLBACK_ANSWER = (
     "담당 부서에 직접 문의해 주세요."
 )
 
+# 도메인을 한정한 검색에서 근거를 하나도 못 찾았을 때의 대체 답변.
+# "문서가 없다"가 아니라 "이 범위에 없다"임을 알려, 범위가 좁혀져 있는 줄
+# 모르는 사용자가 헤매지 않게 한다 — 훈령(DIRECTIVE) 한정 상태로 휴가를
+# 물어 fallback이 난 실측 사례가 있다 (휴가규정.md는 HR 도메인 적재)
+FALLBACK_DOMAIN_SCOPED_TEMPLATE = (
+    "죄송합니다. 현재 검색 범위가 '{domain_label}' 문서로 한정되어 있어 "
+    "질문에 답할 근거를 찾지 못했습니다. 다른 범위의 문서에 있는 내용일 수 있으니 "
+    "검색 범위를 '전체'로 바꿔 다시 물어봐 주세요."
+)
+
 
 def format_documents(chunks: list[dict]) -> str:
     """검색 청크를 <document> delimiter로 감싼다 (interfaces.md §7, 우회 금지)."""
