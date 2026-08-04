@@ -54,6 +54,10 @@ ROUTER_SYSTEM_PROMPT = ROUTER_SYSTEM_TEMPLATE.format(intent_guide=_INTENT_GUIDE)
 # 계획 최대 길이: 한 질문에서 실행할 경로 수 상한 (비용·지연 폭주 방지)
 _MAX_PLAN_STEPS = 3
 
+# 검색 쿼리 수 상한. 쿼리마다 Milvus 검색이 늘고 융합 후보 자리를 나눠 쓰므로
+# 무한정 늘리지 않는다 (임베딩은 배치 1회라 비용이 늘지 않는다)
+_MAX_SEARCH_QUERIES = 3
+
 # 결정적 매처 단독 종결 기준: 이 길이 이하의 질문은 복합일 가능성이 낮아
 # 매처 히트 시 LLM 없이 도구 단독 계획으로 직행한다 (LLM 0회 이점 유지).
 # 긴 질문은 다른 요청이 섞였을 수 있어 LLM 분류를 함께 태운다
@@ -144,7 +148,32 @@ def _normalize_plan(raw_intents: list, matched: list[str]) -> list[str]:
     return plan[:_MAX_PLAN_STEPS] or [DOC_SEARCH]
 
 
-def _route_result(question: str, plan: list[str], retry_count: int) -> dict:
+def _build_search_queries(rewritten: str, question: str, history: list[dict] | None) -> list[str]:
+    """검색에 쓸 쿼리 목록을 만든다. 대표 쿼리(rewritten)가 항상 첫 번째다.
+
+    결정적 규칙만 쓴다 (LLM 미사용):
+    - 대화 이력이 있으면 대표 쿼리 하나만 쓴다. 멀티턴의 원본 질문은
+      "그거 얼마나 써?"처럼 맥락 의존적이라 검색어로는 잡음이다
+    - 이력이 없고 원본이 재작성과 다르면 원본도 넣는다. 재작성이 과도하게
+      축약해 정보를 잃는 경우를 원본이 보완한다
+
+    LLM에게 측면별 분해를 시켜 보았으나 정성 평가에서 순손실이었다:
+    쿼리가 3개로 늘면 RERANK_TOP_K 자리를 나눠 쓰느라 대표 쿼리 몫이 줄어
+    긴 훈령 청크가 밀려났고(실측: fallback 5→6, 평균 길이 322→275자),
+    7B가 재작성·분류·분해를 한 번에 하면서 tool-call을 놓치는 것도 관찰됐다.
+    """
+    queries = [rewritten]
+    if history:
+        return queries
+    compact = re.sub(r"\s+", "", question)
+    if compact and compact != re.sub(r"\s+", "", rewritten):
+        queries.append(question.strip())
+    return queries[:_MAX_SEARCH_QUERIES]
+
+
+def _route_result(
+    question: str, plan: list[str], retry_count: int, history: list[dict] | None = None
+) -> dict:
     """route 반환 dict. intent는 계획의 대표값(첫 항목, 로그·하위 호환용).
 
     계획이 [검색 + 파일 도구] 복합이면 검색 쿼리의 파일 요청 표현을 정리한다.
@@ -154,6 +183,7 @@ def _route_result(question: str, plan: list[str], retry_count: int) -> dict:
         rewritten = _strip_file_phrases(question)
     return {
         "rewritten_query": rewritten,
+        "search_queries": _build_search_queries(rewritten, question, history),
         "intents": plan,
         "pending_intents": execution_queue(plan),
         "intent": plan[0],
@@ -187,6 +217,7 @@ def route(state: QueryState) -> dict:
     question = state["question"]
     retry_count = state.get("retry_count") or 0
     forced_intent = state.get("intent")  # 요청의 tool 필드로 선설정된 강제 경로
+    raw_history = state.get("conversation_history") or []
 
     matched = (
         []
@@ -200,16 +231,16 @@ def route(state: QueryState) -> dict:
     ):
         plan = _normalize_plan([], matched)
         logger.info("라우팅: 계획=%s (결정적 매처 단독, LLM 미사용)", plan)
-        return _route_result(question, plan, retry_count)
+        return _route_result(question, plan, retry_count, raw_history)
 
     if forced_intent:
         fallback_plan = [forced_intent]
     else:
         # LLM 실패 시에도 매처 확정 도구는 잃지 않고, 검색은 원본 질문으로 진행
         fallback_plan = _normalize_plan([*matched, DOC_SEARCH], [])
-    fallback = _route_result(question, fallback_plan, retry_count)
+    fallback = _route_result(question, fallback_plan, retry_count, raw_history)
 
-    history = trim_history(state.get("conversation_history") or [], config.HISTORY_MAX_TOKENS)
+    history = trim_history(raw_history, config.HISTORY_MAX_TOKENS)
     try:
         # tool-call 우선, 실패 시 JSON 강제 모드 재시도 (tool_fallback.call_with_schema)
         args = call_with_schema(
@@ -243,13 +274,21 @@ def route(state: QueryState) -> dict:
             # "…문서로 만들어줘"가 남으면 리랭크 점수 30배 붕괴 → 검색 전멸)
             rewritten = _strip_file_phrases(rewritten)
 
+        # LLM이 만든 재작성 쿼리로 검색 쿼리 목록을 다시 세운다
+        # (_route_result는 원본 질문 기준이라 그대로 두면 재작성이 반영되지 않는다)
+        search_queries = _build_search_queries(rewritten, question, raw_history)
         logger.info(
-            "라우팅: 계획=%s%s, rewritten=%s",
+            "라우팅: 계획=%s%s, rewritten=%s, 검색 쿼리 %s",
             plan,
             " (강제)" if forced_intent else "",
             rewritten,
+            search_queries,
         )
-        return {**_route_result(question, plan, retry_count), "rewritten_query": rewritten}
+        return {
+            **_route_result(question, plan, retry_count, raw_history),
+            "rewritten_query": rewritten,
+            "search_queries": search_queries,
+        }
     except Exception:
         # 라우터 실패가 파이프라인 전체를 죽이지 않게 폴백 (검색은 원본 질문으로 진행)
         logger.exception("라우터 호출 실패 → 원본 질문 + %s 폴백", fallback_plan)

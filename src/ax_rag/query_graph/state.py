@@ -12,7 +12,12 @@ class QueryState(TypedDict):
 
     question: str  # 원본 질문 (generate 프롬프트용)
     conversation_history: list[dict] | None  # [{"role": "user"|"assistant", "content": str}]
-    rewritten_query: str | None  # route가 생성한 검색용 쿼리
+    rewritten_query: str | None  # route가 생성한 검색용 쿼리 (대표 쿼리, 리랭크 기준)
+    # 실제로 검색에 쓰이는 쿼리 목록. 첫 항목이 대표 쿼리(rewritten_query)다.
+    # 단일 쿼리는 하나의 의미 이웃만 긁어 다면적 질문에서 근거가 한쪽으로 쏠린다
+    # (실측: "조건·기간·신청 방법"을 물었는데 근거 청크 1건) — 측면별로 나눠
+    # 검색해 후보 폭을 넓힌다. 비어 있으면 rewritten_query 하나로 검색한다
+    search_queries: list[str] | None
     user_department: str
     # 요청이 명시한 검색 도메인 한정 (main.py에서 정규화). 빈 값이면 전 도메인 검색.
     # 검색 필터에 쓰이는 유일한 도메인 값
