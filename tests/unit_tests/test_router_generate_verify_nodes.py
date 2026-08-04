@@ -282,6 +282,17 @@ def test_smalltalk_LLM_실패_시_기본_인사로_폴백(monkeypatch: pytest.Mo
 # ---------- verify ----------
 
 
+def test_generate_프롬프트는_풍부한_부분_답변을_요구한다() -> None:
+    """모르는 부분이 있다고 답변 전체를 줄이면 안 된다 (verify 개정과 짝)."""
+    from ax_rag.query_graph.prompts import GENERATE_SYSTEM_PROMPT
+
+    assert "한두 문장으로 끝내지 않는다" in GENERATE_SYSTEM_PROMPT
+    assert "답할 수 있는 부분은 그대로 충실히 답한다" in GENERATE_SYSTEM_PROMPT
+    # 근거 준수 지시는 그대로 유지돼야 한다
+    assert "지어내 추가하지 않는다" in GENERATE_SYSTEM_PROMPT
+    assert "예시를 지어내지 않는다" in GENERATE_SYSTEM_PROMPT
+
+
 def test_verify_전제_미충족이면_LLM_호출_없이_즉시_False(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
