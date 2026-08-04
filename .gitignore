@@ -20,3 +20,6 @@ build/
 .pytest_cache/
 .ruff_cache/
 .langgraph_api/
+
+# 정성 평가 산출물 (scripts/compare_answers.py·evaluate_rag.py 결과 — 재생성 가능)
+eval_sets/results/

@@ -1,0 +1,13 @@
+{"id": "fact-01", "type": "단일 사실", "question": "육아휴직은 최대 얼마나 쓸 수 있나요?", "user_department": "HR_TEAM", "note": "기준 유형 — 답변이 짧아도 정상"}
+{"id": "fact-02", "type": "단일 사실", "question": "연차가 다음 해로 넘어가면 며칠까지 인정되나요?", "user_department": "HR_TEAM", "note": "기준 유형"}
+{"id": "multi-01", "type": "다면적", "question": "휴가 규정 전반에 대해 알려줘", "user_department": "HR_TEAM", "note": "2단계 표적 — sources 문서 수와 다루는 항목 수가 늘어야 함"}
+{"id": "multi-02", "type": "다면적(부분 정답)", "question": "휴가 종류에는 어떤 것들이 있고 각각 신청 절차는 어떻게 되나요?", "user_department": "HR_TEAM", "note": "★ 3단계 표적 — '신청 절차'는 문서에 없고 '휴가 종류'만 있다. 한 쿼리로 검색하면 리랭크가 전멸(0.015 이하)하지만, 측면을 나누면 종류 부분은 답할 수 있어야 한다"}
+{"id": "multi-03", "type": "다면적", "question": "국방 데이터 관리 훈령의 주요 내용과 적용 범위를 알려줘", "user_department": "HR_TEAM", "domain": "DIRECTIVE", "note": "훈령 도메인 다면적 질문"}
+{"id": "synth-01", "type": "종합·집계", "question": "휴가 종류가 몇 가지인지와 각각 며칠인지 정리해줘", "user_department": "HR_TEAM", "note": "1단계 표적 — 개수(N가지) 표현이 verify를 통과해야 함"}
+{"id": "synth-02", "type": "정답 없음", "question": "연차와 특별휴가를 합치면 최대 며칠을 쉴 수 있나요?", "user_department": "HR_TEAM", "note": "★ fallback이 정답 — '특별휴가'는 휴가규정.md에 없다(0건). 근거 없는 합산을 지어내지 않는지 보는 안전장치 문항"}
+{"id": "synth-03", "type": "종합·집계", "question": "육아휴직 제도를 조건, 기간, 신청 방법으로 나눠서 설명해줘", "user_department": "HR_TEAM", "note": "1단계 표적 — 구조화·항목화가 늘어야 함"}
+{"id": "domain-01", "type": "법령", "question": "국가를 당사자로 하는 계약에 관한 법률의 목적이 뭔가요?", "user_department": "HR_TEAM", "domain": "FINANCE_LEGAL", "note": "법령 도메인 동작 확인"}
+{"id": "domain-02", "type": "훈령", "question": "탄약 안전관리에서 지켜야 할 기본 원칙은?", "user_department": "HR_TEAM", "domain": "DIRECTIVE", "note": "훈령 도메인 동작 확인"}
+{"id": "guard-01", "type": "근거 없음", "question": "우주군 창설 계획이 어떻게 되나요?", "user_department": "HR_TEAM", "note": "안전장치 확인 — fallback이 나와야 정상. 지어낸 답이 나오면 회귀"}
+{"id": "guard-02", "type": "범위 밖", "question": "휴가규정 알려줘", "user_department": "HR_TEAM", "domain": "DIRECTIVE", "note": "안전장치 확인 — 도메인 한정 안내 문구가 나와야 정상"}
+{"id": "guard-03", "type": "잡담", "question": "안녕! 너는 뭘 할 수 있어?", "user_department": "HR_TEAM", "note": "안전장치 확인 — SMALLTALK 경로, sources 비어야 정상"}

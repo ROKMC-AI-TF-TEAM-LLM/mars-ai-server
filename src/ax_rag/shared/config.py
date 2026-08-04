@@ -86,6 +86,10 @@ class Config:
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
+    # --- 자기 자신(MARS API) 주소. 평가·비교 스크립트가 /query를 호출할 때만 쓴다.
+    # 서버 코드는 이 값을 쓰지 않는다 (자기 자신을 HTTP로 부르지 않음) ---
+    MARS_SERVER_URL: str = "http://localhost:9000"
+
     # --- 문서 업로드 임시 스테이징 경로 (POST /documents가 받은 파일 원본) ---
     # 원본의 영속 보관 주체는 미들웨어(자기 DB)다. MARS는 청킹·임베딩·색인만
     # 한다. 여기 스테이징된 로컬 원본의 TTL 정리는 향후 도입 예정
@@ -111,7 +115,12 @@ class Config:
 
     def __post_init__(self) -> None:
         """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다."""
-        for name in ("AX_BASE_URL", "EMBEDDING_SERVER_URL", "RERANKER_SERVER_URL"):
+        for name in (
+            "AX_BASE_URL",
+            "EMBEDDING_SERVER_URL",
+            "RERANKER_SERVER_URL",
+            "MARS_SERVER_URL",
+        ):
             url: str = getattr(self, name)
             host = urlparse(url).hostname
             if host not in _ALLOWED_HOSTS:
@@ -163,6 +172,7 @@ def get_config() -> Config:
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
+        MARS_SERVER_URL=_env_str("MARS_SERVER_URL", "http://localhost:9000"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),
         EXPORT_DIR=_env_str("EXPORT_DIR", "./data/exports"),
         EXPORT_TTL_HOURS=_env_int("EXPORT_TTL_HOURS", 24),
