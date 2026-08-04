@@ -192,6 +192,52 @@ def test_generate는_설정_온도로_호출한다(monkeypatch: pytest.MonkeyPat
     assert fake.bind_kwargs == {"temperature": get_config().GENERATE_TEMPERATURE}
 
 
+def test_재생성이면_반려_사유를_프롬프트에_넣는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """실측: 사유를 안 알려주면 재생성이 같은 실수를 반복한다
+    (1차 777자 → 2차 768자, 둘 다 '신청 방법이 문서에 없다'로 탈락 후 fallback)."""
+    fake = _FakeLLM(SimpleNamespace(content="다시 쓴 답변", tool_calls=[]))
+    monkeypatch.setattr(generate_module, "get_llm", lambda: fake)
+
+    generate_module.generate(
+        {
+            "question": "휴가 규정 알려줘",
+            "retrieved_chunks": _CHUNKS,
+            "retry_count": 1,
+            "retry_hint": "신청 방법에 대한 구체적인 정보가 문서에 포함되어 있지 않습니다.",
+        }
+    )
+    user_text = fake.captured_messages[-1].content
+    assert "반려" in user_text
+    assert "신청 방법에 대한 구체적인 정보가 문서에 포함되어 있지 않습니다." in user_text
+    # 과잉 교정 방지 지시가 함께 들어가야 한다 (사유만 주면 답변 전체를 줄여버린다)
+    assert "나머지 내용은 줄이지 말고" in user_text
+
+
+def test_첫_생성에는_재작성_지시가_없다(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeLLM(SimpleNamespace(content="답변", tool_calls=[]))
+    monkeypatch.setattr(generate_module, "get_llm", lambda: fake)
+    generate_module.generate({"question": "질문", "retrieved_chunks": _CHUNKS})
+    assert "반려" not in fake.captured_messages[-1].content
+
+
+def test_사유가_비어_있으면_재작성_지시를_붙이지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify가 사유 없이 떨어뜨린 경우 빈 지시문으로 프롬프트를 오염시키지 않는다."""
+    fake = _FakeLLM(SimpleNamespace(content="답변", tool_calls=[]))
+    monkeypatch.setattr(generate_module, "get_llm", lambda: fake)
+    generate_module.generate(
+        {"question": "질문", "retrieved_chunks": _CHUNKS, "retry_count": 1, "retry_hint": "  "}
+    )
+    assert "반려" not in fake.captured_messages[-1].content
+
+
+def test_increment_retry가_사유를_실어_보낸다() -> None:
+    from ax_rag.query_graph.graph import increment_retry
+
+    result = increment_retry({"retry_count": 0, "verify_reason": "근거에 없는 수치: 20"})
+    assert result["retry_count"] == 1
+    assert result["retry_hint"] == "근거에 없는 수치: 20"
+
+
 def test_generate_근거_없으면_빈_초안(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom() -> None:
         raise AssertionError("근거 없으면 LLM을 호출하면 안 된다")

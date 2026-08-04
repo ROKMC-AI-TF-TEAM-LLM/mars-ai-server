@@ -86,12 +86,16 @@ def finalize(state: QueryState) -> dict:
 
 
 def increment_retry(state: QueryState) -> dict:
-    """검증 실패 시 재시도 횟수를 올리고 generate로 되돌아간다."""
+    """검증 실패 시 재시도 횟수를 올리고, **반려 사유를 실어** generate로 되돌아간다.
+
+    사유를 넘기지 않으면 재생성이 1차와 똑같은 프롬프트로 돌아 같은 실수를
+    반복한다 (실측: 777자 → 768자, 동일 사유로 연속 탈락 후 fallback).
+    retry_hint는 generate가 읽어 재작성 지시로 쓴다.
+    """
+    reason = str(state.get("verify_reason") or "").strip()
     retry_count = (state.get("retry_count") or 0) + 1
-    logger.info(
-        "검증 실패 → 재생성 시도 %d회차 (사유: %s)", retry_count, state.get("verify_reason")
-    )
-    return {"retry_count": retry_count}
+    logger.info("검증 실패 → 재생성 시도 %d회차 (사유: %s)", retry_count, reason or "(없음)")
+    return {"retry_count": retry_count, "retry_hint": reason}
 
 
 def _fallback_answer(state: QueryState) -> str:

@@ -45,4 +45,8 @@ class QueryState(TypedDict):
     grounded: bool | None
     verify_reason: str | None
     retry_count: int
+    # increment_retry가 실어 보내는 직전 반려 사유. generate가 재작성 지시로 쓴다.
+    # verify_reason과 내용은 같지만 소유가 다르다 — 이 값이 있으면 "재생성 중"이라는
+    # 뜻이고, 1차 생성에는 존재하지 않는다
+    retry_hint: str | None
     final_answer: str | None

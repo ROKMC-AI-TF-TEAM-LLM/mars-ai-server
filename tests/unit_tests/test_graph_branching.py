@@ -44,9 +44,13 @@ def test_finalize는_초안을_확정한다() -> None:
     assert result["pending_intents"] == []  # DOC_SEARCH는 큐에서 소비됨
 
 
-def test_increment_retry는_횟수를_올린다() -> None:
-    assert increment_retry({"retry_count": 0}) == {"retry_count": 1}
-    assert increment_retry({}) == {"retry_count": 1}
+def test_increment_retry는_횟수를_올리고_반려_사유를_싣는다() -> None:
+    """사유를 넘겨야 재생성이 같은 실수를 반복하지 않는다 (generate가 읽는다)."""
+    assert increment_retry({"retry_count": 0, "verify_reason": "근거에 없는 수치: 20"}) == {
+        "retry_count": 1,
+        "retry_hint": "근거에 없는 수치: 20",
+    }
+    assert increment_retry({}) == {"retry_count": 1, "retry_hint": ""}
 
 
 def test_fallback은_안전한_대체_답변을_확정한다() -> None:
