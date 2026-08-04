@@ -293,6 +293,93 @@ def test_generate_프롬프트는_풍부한_부분_답변을_요구한다() -> N
     assert "예시를 지어내지 않는다" in GENERATE_SYSTEM_PROMPT
 
 
+class _SequenceLLM:
+    """호출마다 다른 응답을 돌려주는 가짜 LLM (부분 수용의 2회 검증용)."""
+
+    def __init__(self, responses: list) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+
+    def bind_tools(self, tools: list, **kwargs: object) -> _SequenceLLM:
+        return self
+
+    def bind(self, **kwargs: object) -> _SequenceLLM:
+        return self
+
+    def invoke(self, messages: list) -> object:
+        response = self.responses[min(self.calls, len(self.responses) - 1)]
+        self.calls += 1
+        return response
+
+
+_PARTIAL_DRAFT = "병가는 연 60일 한도입니다.\n병가 신청은 지휘관의 승인을 받아야 합니다."
+
+
+def test_verify_부분_수용은_지목된_문장만_빼고_통과시킨다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """실측: 한도·진단서는 정확한데 '지휘관 승인'을 지어내 답변 전체가 버려졌다."""
+    fake = _SequenceLLM(
+        [
+            _tool_response(
+                "VerifyAnswer",
+                {
+                    "grounded": False,
+                    "reason": "지휘관 승인은 문서에 없다",
+                    "unsupported": ["병가 신청은 지휘관의 승인을 받아야 합니다."],
+                },
+            ),
+            _tool_response("VerifyAnswer", {"grounded": True, "reason": "남은 내용은 근거함"}),
+        ]
+    )
+    monkeypatch.setattr(verify_module, "get_llm", lambda: fake)
+    result = verify_module.verify(
+        {"question": "병가 규정", "draft_answer": _PARTIAL_DRAFT, "retrieved_chunks": _CHUNKS}
+    )
+    assert result["grounded"] is True
+    assert "지휘관" not in result["draft_answer"]  # 근거 없는 문장 제거
+    assert "연 60일 한도" in result["draft_answer"]  # 근거 있는 내용은 유지
+    assert "제외했습니다" in result["draft_answer"]  # 사용자 안내 부착
+    assert fake.calls == 2  # 정제본을 반드시 재검증한다
+
+
+def test_verify_정제본이_재검증에_떨어지면_반려_유지(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★ fail-closed: 최종적으로 검증을 통과한 텍스트만 내보낸다."""
+    fake = _SequenceLLM(
+        [
+            _tool_response(
+                "VerifyAnswer",
+                {
+                    "grounded": False,
+                    "reason": "근거 없음",
+                    "unsupported": ["병가 신청은 지휘관의 승인을 받아야 합니다."],
+                },
+            ),
+            _tool_response("VerifyAnswer", {"grounded": False, "reason": "여전히 근거 없음"}),
+        ]
+    )
+    monkeypatch.setattr(verify_module, "get_llm", lambda: fake)
+    result = verify_module.verify(
+        {"question": "병가 규정", "draft_answer": _PARTIAL_DRAFT, "retrieved_chunks": _CHUNKS}
+    )
+    assert result["grounded"] is False
+    assert "draft_answer" not in result  # 초안을 바꾸지 않는다
+
+
+def test_verify_지목이_없으면_부분_수용을_시도하지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _SequenceLLM(
+        [_tool_response("VerifyAnswer", {"grounded": False, "reason": "근거 없음"})]
+    )
+    monkeypatch.setattr(verify_module, "get_llm", lambda: fake)
+    result = verify_module.verify(
+        {"question": "병가 규정", "draft_answer": _PARTIAL_DRAFT, "retrieved_chunks": _CHUNKS}
+    )
+    assert result["grounded"] is False
+    assert fake.calls == 1  # 재검증 호출 없음
+
+
 def test_verify_전제_미충족이면_LLM_호출_없이_즉시_False(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
