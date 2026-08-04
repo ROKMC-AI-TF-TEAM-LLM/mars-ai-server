@@ -135,10 +135,10 @@ def trim_history(history: list[dict], max_tokens: int = 1500) -> list[dict]:
     """최근 턴부터 역순으로 채우고 상한 초과분 절삭. 문자수/2.2 근사 사용."""
 
 # query_graph/nodes/verify.py
-def rule_based_verify(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[bool, str]:
-    """1차 규칙 검증: draft_answer에 등장하는 숫자, 날짜, 문서명이
-    retrieved_chunks 텍스트에 실재하는지 확인. (통과 여부, 사유) 반환.
-    실패하면 LLM 검증 없이 즉시 grounded=False."""
+def check_preconditions(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[bool, str]:
+    """LLM에 판정을 물을 수 있는 상태인지 확인. (가능 여부, 사유) 반환.
+    답변이 비었거나 근거 청크가 0건이면 LLM 호출 없이 grounded=False.
+    내용의 근거 여부는 판단하지 않는다 — 그 판정은 LLM 검증이 전담한다."""
 
 # shared/llm_client.py
 def get_llm() -> "ChatOpenAI": ...   # @lru_cache(maxsize=1)

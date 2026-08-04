@@ -90,13 +90,6 @@ class Config:
     # 서버 코드는 이 값을 쓰지 않는다 (자기 자신을 HTTP로 부르지 않음) ---
     MARS_SERVER_URL: str = "http://localhost:9000"
 
-    # --- 규칙 검증: 근거 청크 내 두 수치의 합·차로 설명되는 값을 허용할지 ---
-    # 답변이 계산 과정을 밝힌 경우와 열거 개수(N가지)는 이 값과 무관하게 항상
-    # 허용된다 (답변 자체로 검증되는 안전 경로). 이 스위치는 **청크 내 조합**
-    # 경로만 켜고 끈다 — 근거 수치가 많을수록 조합 공간이 커져 규칙이 느슨해지므로,
-    # 지어낸 수치가 이 경로로 새는 것이 관찰되면 false로 내려 즉시 차단한다
-    VERIFY_ALLOW_ARITHMETIC: bool = True
-
     # --- 문서 업로드 임시 스테이징 경로 (POST /documents가 받은 파일 원본) ---
     # 원본의 영속 보관 주체는 미들웨어(자기 DB)다. MARS는 청킹·임베딩·색인만
     # 한다. 여기 스테이징된 로컬 원본의 TTL 정리는 향후 도입 예정
@@ -154,17 +147,6 @@ def _env_float(key: str, default: float) -> float:
     return float(value) if value else default
 
 
-def _env_bool(key: str, default: bool) -> bool:
-    """환경변수 불리언 조회. 비어 있으면 기본값.
-
-    참으로 인정하는 값: 1/true/yes/on (대소문자 무관). 그 외는 거짓.
-    """
-    value = os.environ.get(key, "").strip().lower()
-    if not value:
-        return default
-    return value in ("1", "true", "yes", "on")
-
-
 @lru_cache(maxsize=1)
 def get_config() -> Config:
     """설정 싱글턴. 최초 호출 시 .env를 로드한다."""
@@ -191,7 +173,6 @@ def get_config() -> Config:
         GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         MARS_SERVER_URL=_env_str("MARS_SERVER_URL", "http://localhost:9000"),
-        VERIFY_ALLOW_ARITHMETIC=_env_bool("VERIFY_ALLOW_ARITHMETIC", True),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),
         EXPORT_DIR=_env_str("EXPORT_DIR", "./data/exports"),
         EXPORT_TTL_HOURS=_env_int("EXPORT_TTL_HOURS", 24),

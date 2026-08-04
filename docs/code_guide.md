@@ -315,7 +315,7 @@ flowchart TB
     bm25 --> fuse["fuse<br/>RRF 융합 1/(60+순위)<br/><i>순수 연산, 상위 RERANK_TOP_K</i>"]
     fuse --> rerank["rerank<br/>top5 확정 → 부모 치환<br/><i>리랭커 :8002</i>"]
     rerank --> generate["generate<br/>근거 기반 초안<br/><i>&lt;document&gt; 격리 + 질문 2벌<br/>도구 처리분은 답하지 않음</i>"]
-    generate --> verify["verify<br/>규칙 + LLM 이중 검증<br/><i>판정 불가 = 탈락 (fail-closed)<br/>도구 처리분은 판정 제외</i>"]
+    generate --> verify["verify<br/>LLM 근거 검증<br/><i>판정 불가 = 탈락 (fail-closed)<br/>도구 처리분은 판정 제외</i>"]
 
     verify -- "grounded=True" --> finalize["finalize<br/>도구+문서 답변을<br/>계획 순서로 코드 합성"]
     verify -- "실패·재시도 여유" --> retry["increment_retry<br/>재시도 +1 (MAX=1)"]
@@ -522,26 +522,29 @@ if not chunks:
   원본을 보고 미스매치를 감지할 여지를 남긴다 (architecture.md §4).
 - 대화 이력(절삭본)도 함께 들어간다 — "아까 말한 그 규정" 류의 참조 대응.
 
-### 4-10. verify (nodes/verify.py) — 이중 검증
+### 4-10. verify (nodes/verify.py) — LLM 근거 검증
 
-**1차: rule_based_verify (LLM 없이 코드로)**
+**전제 검사: check_preconditions (LLM 없이 코드로)**
 
 ```python
-_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")       # 15 / 1,500,000 / 2026 ...
-_DOCNAME_RE = re.compile(r"...\.(?:pdf|docx|hwp|md|txt|...)")  # 파일명
-
-for number in _NUMBER_RE.findall(draft_answer):
-    if _normalize_numbers(number) not in corpus_normalized:   # 콤마 무시 비교
-        return False, f"근거에 없는 수치/날짜: {number}"
+if not draft_answer.strip():   return False, "답변이 비어 있다"
+if not retrieved_chunks:       return False, "검증할 근거 청크가 없다"
 ```
 
-답변 속 모든 숫자(날짜 포함)와 문서명이 근거 청크 텍스트에 실재해야 한다.
-"연차 25일"을 지어내면 여기서 즉시 탈락하고 LLM 검증 비용도 안 쓴다.
-부분 문자열 검사라 "150"이 "1500"에 매칭되는 관대함은 있지만(주석에 명시),
-아예 없는 수치는 확실히 걸린다.
+물을 것이 없는 상태를 걸러 LLM 호출을 아낀다. **내용의 근거 여부는 판단하지 않는다.**
 
-**2차: LLM 검증** — `VerifyAnswer{grounded: bool, reason: str}` 구조화 호출.
-의미적 왜곡("문서엔 팀장 승인이라 했는데 답변은 자율이라 함")을 잡는 층.
+**판정: LLM 검증** — `VerifyAnswer{grounded: bool, reason: str}` 구조화 호출.
+수치 창작("연차 25일")과 의미적 왜곡("문서엔 팀장 승인인데 답변은 자율이라 함")을
+모두 이 층이 잡는다.
+
+> **왜 규칙 검증을 뺐나**: 답변 속 모든 숫자·문서명이 근거에 문자열로 있는지
+> 대조하던 1차 규칙이 있었다. 부분 문자열 비교라 정밀도가 낮았고("150"이
+> "1500"에 매칭), 종합 표현("총 20일", "3가지")을 살리려 예외 경로를 덧대는
+> 과정에서 오탐·오통과가 반복됐다 — 목록 번호 오탐, "6개월"을 개수로 오인,
+> 근거의 2026+1로 지어낸 연도 2027이 통과. LLM 검증이 그 몫을 온전히 대신하는
+> 것을 실측으로 확인했다: 지어낸 일수(15→25)·이월 한도(5→10)·기한(6월→12월)·
+> 조항 번호를 3회씩 전부 `grounded=False`로 판정(15/15)했고, 규칙이 구조적으로
+> 못 하던 **근거와의 모순**까지 잡는다.
 
 **fail-closed 원칙**: 빈 답변, 근거 없음, tool-call/JSON 파싱 실패, 예외 —
 판정이 불가능한 **모든** 경로가 `grounded=False`다. "확인 못 했으면 통과"가

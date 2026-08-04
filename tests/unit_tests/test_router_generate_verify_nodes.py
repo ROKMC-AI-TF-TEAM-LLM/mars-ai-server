@@ -282,16 +282,36 @@ def test_smalltalk_LLM_실패_시_기본_인사로_폴백(monkeypatch: pytest.Mo
 # ---------- verify ----------
 
 
-def test_verify_규칙_실패면_LLM_호출_없이_즉시_False(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_전제_미충족이면_LLM_호출_없이_즉시_False(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """빈 답변·근거 0건은 LLM에 물을 것이 없다 — 호출을 아끼고 fail-closed."""
+
     def boom() -> None:
-        raise AssertionError("규칙 실패 시 LLM을 호출하면 안 된다")
+        raise AssertionError("전제 미충족 시 LLM을 호출하면 안 된다")
 
     monkeypatch.setattr(verify_module, "get_llm", boom)
+    for state in (
+        {"question": "질문", "draft_answer": "   ", "retrieved_chunks": _CHUNKS},
+        {"question": "질문", "draft_answer": "연차는 15일입니다.", "retrieved_chunks": []},
+    ):
+        result = verify_module.verify(state)
+        assert result["grounded"] is False
+        assert "전제 미충족" in result["verify_reason"]
+
+
+def test_verify_지어낸_수치는_LLM에_판정을_맡긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """규칙으로 미리 막지 않는다. 실측 근거: LLM이 지어낸 일수·이월 한도·기한·
+    조항 번호를 3회씩 전부 grounded=False로 잡았다 (15/15)."""
+    fake = _FakeLLM(
+        _tool_response("VerifyAnswer", {"grounded": False, "reason": "근거는 15일인데 99일이라 함"})
+    )
+    monkeypatch.setattr(verify_module, "get_llm", lambda: fake)
     result = verify_module.verify(
         {"question": "질문", "draft_answer": "연차는 99일입니다.", "retrieved_chunks": _CHUNKS}
     )
+    assert fake.captured_messages is not None  # LLM이 실제로 호출됐다
     assert result["grounded"] is False
-    assert "규칙 검증 실패" in result["verify_reason"]
 
 
 def test_verify_LLM이_grounded_True면_통과(monkeypatch: pytest.MonkeyPatch) -> None:

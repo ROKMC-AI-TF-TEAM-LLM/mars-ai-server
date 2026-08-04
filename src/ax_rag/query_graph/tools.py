@@ -132,9 +132,9 @@ def format_handled_note(state: QueryState, template: str) -> str:
     - generate: 빠뜨리면 "그 기능은 제공하지 않는다" 같은 잘못된 사족을 붙인다 (실측)
     - verify: 빠뜨리면 답변이 도구 몫을 안 다뤘다고 grounded=false 오탐을 낸다 (실측)
 
-    도구 답변의 수치는 넣지 않는다 — 초안에 섞이면 rule_based_verify가
-    "근거에 없는 수치"로 오탐한다. 라우터용 상세 설명(TOOL_DESCRIPTIONS)이
-    아니라 예시 없는 짧은 라벨(TOOL_HANDLED_LABELS)을 쓰는 이유도 같다:
+    도구 답변의 수치는 넣지 않는다 — 검증기가 "답변이 근거 밖 수치를 말한다"고
+    오판할 수 있다. 라우터용 상세 설명(TOOL_DESCRIPTIONS)이 아니라 예시 없는
+    짧은 라벨(TOOL_HANDLED_LABELS)을 쓰는 이유도 같다:
     분류 예시 문구가 안내문에 실리면 7B가 답변 내용으로 착각한다 (실측).
 
     담당 도구가 없으면 빈 문자열 (안내문 자체를 붙이지 않는다).

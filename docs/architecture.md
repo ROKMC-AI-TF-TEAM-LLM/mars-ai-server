@@ -87,7 +87,7 @@ mars-ai-server/
 │           ├── fuse.py
 │           ├── rerank.py       # top_n=5 확정 + 부모 치환
 │           ├── generate.py
-│           └── verify.py       # LLM 검증 + 규칙 기반 검증 이중화
+│           └── verify.py       # LLM 근거 검증 (fail-closed)
 ├── serving/
 │   ├── start_vllm.sh           # L40 운영 서빙
 │   ├── start_llm_dev.ps1       # 개발 노트북 llama.cpp 서빙 (vLLM 대체)
@@ -137,9 +137,13 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
 5. **rerank** — 리랭커 서버 호출 → top_n=5 확정 → 그 5개만 부모 청크로 치환
 6. **generate** — 근거 기반 답변 생성. 프롬프트에는 원본 질문과 rewritten_query를
    **둘 다** 포함시켜 검색-생성 미스매치를 모델이 감지할 여지를 남긴다
-7. **verify** — 이중 검증:
-   - 1차 규칙 기반: draft_answer의 수치/날짜/문서명이 retrieved_chunks에 실재하는지
-   - 2차 LLM 기반: VerifyAnswer tool-call. tool_call 실패 시 grounded=False (fail-closed)
+7. **verify** — LLM 근거 검증 (VerifyAnswer tool-call):
+   - 전제 검사(코드): 답변이 비었거나 근거 0건이면 LLM 호출 없이 grounded=False
+   - 판정: tool_call 실패·예외 시에도 grounded=False (fail-closed)
+   - 수치/문서명을 근거 문자열과 대조하던 규칙 검증은 제거했다. 부분 문자열
+     대조라 정밀도가 낮아 오탐·오통과가 반복됐고, LLM 검증이 그 몫을 온전히
+     대신하는 것을 실측으로 확인했다 (지어낸 일수·이월 한도·기한·조항 번호를
+     전부 탈락시키고, 규칙이 못 하던 근거와의 **모순**까지 판별)
 8. **finalize / increment_retry / fallback** — 성공 시 도구 답변(tool_answers)과
    문서 답변을 계획 순서로 합성해 확정 (코드 조립만 — verify 뒤 LLM 가공 금지),
    실패 시 MAX_VERIFY_RETRY(=1)까지 generate만 재실행 (도구는 재실행 안 함),
