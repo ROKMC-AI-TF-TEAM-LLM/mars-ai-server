@@ -78,12 +78,14 @@ class Config:
     # --- 파이프라인 ---
     MAX_VERIFY_RETRY: int
     HISTORY_MAX_TOKENS: int
-    # generate 노드 전용 온도 (기본 0.3). 라우터·verify는 0 고정(분류·판정
-    # 재현성), 답변 생성만 올려 문장 자연스러움 + verify 재시도 시 실질적으로
-    # 다른 초안이 나오게 한다 (0이면 재생성해도 사실상 같은 답).
-    # 0.2 → 0.3: 근거 기반 서술을 더 풍부하게 하기 위한 소폭 상향. 표현의
-    # 다양성과 함께 창작 위험도 올라가므로, 문서에 없는 내용이 늘어나는 것이
-    # 관찰되면 .env로 즉시 되돌릴 것 (근거 준수는 프롬프트가 주된 통제 수단이다)
+    # generate 노드 전용 온도 (기본 0.2). 라우터·verify는 0 고정(분류·판정
+    # 재현성), 답변 생성만 살짝 올려 문장 자연스러움 + verify 재시도 시
+    # 실질적으로 다른 초안이 나오게 한다 (0이면 재생성해도 사실상 같은 답).
+    #
+    # 0.3으로 올려 봤다가 되돌렸다 — 정성 평가에서 fallback 5/13 → 8/13,
+    # 평균 답변 길이 322자 → 171자로 악화. 답변이 길어지면서 근거 밖 문장이
+    # 섞일 표면적도 함께 커졌고, 긴 답변을 내던 훈령·법령 문항 3개가 전부
+    # 무너졌다. 근거 준수의 통제 수단은 온도가 아니라 프롬프트다
     GENERATE_TEMPERATURE: float
 
     # --- 감사 로그 ---
@@ -173,7 +175,7 @@ def get_config() -> Config:
         SEARCH_TOP_K=_env_int("SEARCH_TOP_K", 20),
         MAX_VERIFY_RETRY=_env_int("MAX_VERIFY_RETRY", 1),
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
-        GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.3),
+        GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         MARS_SERVER_URL=_env_str("MARS_SERVER_URL", "http://localhost:9000"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),

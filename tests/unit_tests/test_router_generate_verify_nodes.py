@@ -286,8 +286,10 @@ def test_generate_프롬프트는_풍부한_부분_답변을_요구한다() -> N
     """모르는 부분이 있다고 답변 전체를 줄이면 안 된다 (verify 개정과 짝)."""
     from ax_rag.query_graph.prompts import GENERATE_SYSTEM_PROMPT
 
-    assert "한두 문장으로 끝내지 않는다" in GENERATE_SYSTEM_PROMPT
+    assert "근거에 있는 내용은 빠뜨리지 않는다" in GENERATE_SYSTEM_PROMPT
     assert "답할 수 있는 부분은 그대로 충실히 답한다" in GENERATE_SYSTEM_PROMPT
+    # 분량 압박은 창작을 부른다 — 실측: 온도 0.3 + "길게 쓰라"로 fallback 5→8/13
+    assert "분량을 채우려고 늘려 쓰지 않는다" in GENERATE_SYSTEM_PROMPT
     # 근거 준수 지시는 그대로 유지돼야 한다
     assert "지어내 추가하지 않는다" in GENERATE_SYSTEM_PROMPT
     assert "예시를 지어내지 않는다" in GENERATE_SYSTEM_PROMPT
