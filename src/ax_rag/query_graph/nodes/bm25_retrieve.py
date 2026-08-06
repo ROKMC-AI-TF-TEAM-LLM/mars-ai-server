@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from ax_rag.query_graph.acl import filter_by_acl
+from ax_rag.query_graph.nodes.dense_retrieve import search_queries_of
 from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.bm25_store import bm25_search
 from ax_rag.shared.config import get_config
@@ -20,17 +21,28 @@ _OVERSAMPLE_FACTOR = 3
 
 
 def bm25_retrieve(state: QueryState) -> dict:
-    """BM25 검색 → filter_by_acl 후처리(우회 금지) → top_k=SEARCH_TOP_K."""
-    query = state.get("rewritten_query") or state["question"]
+    """BM25 검색 → filter_by_acl 후처리(우회 금지) → 쿼리마다 top_k=SEARCH_TOP_K."""
+    queries = search_queries_of(state)
     scope = state.get("requested_domain") or "GENERAL"  # GENERAL=도메인 제한 없음
     top_k = get_config().SEARCH_TOP_K
+    department = state.get("user_department", "")
 
-    raw_results = bm25_search(query, top_k=top_k * _OVERSAMPLE_FACTOR)
-    if not raw_results:
+    candidates: list[dict] = []
+    raw_total = 0
+    for index, query in enumerate(queries):
+        raw_results = bm25_search(query, top_k=top_k * _OVERSAMPLE_FACTOR)
+        raw_total += len(raw_results)
+        if not raw_results:
+            continue
+        # ACL 후처리는 쿼리마다 반드시 적용한다 (우회 경로를 만들지 않는다)
+        filtered = filter_by_acl(raw_results, scope, department)
+        candidates.extend({**item, "query_index": index} for item in filtered[:top_k])
+
+    if not candidates:
         logger.info("bm25 결과 없음 (인덱스 부재 또는 무매칭) → dense 단독 폴백")
         return {"bm25_candidates": []}
 
-    filtered = filter_by_acl(raw_results, scope, state.get("user_department", ""))
-    candidates = filtered[:top_k]
-    logger.info("bm25 검색: 원시 %d건 → ACL 후 %d건", len(raw_results), len(candidates))
+    logger.info(
+        "bm25 검색: 쿼리 %d개, 원시 %d건 → ACL 후 %d건", len(queries), raw_total, len(candidates)
+    )
     return {"bm25_candidates": candidates}

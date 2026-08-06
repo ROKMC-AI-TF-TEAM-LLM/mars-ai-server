@@ -26,9 +26,14 @@ class _FakeResponse:
         return {"scores": self._scores}
 
 
+# 테스트용 고정 임계값. 실제 .env의 RERANK_SCORE_THRESHOLD에 의존하지 않도록
+# 픽스처에서 이 값으로 고정한다 (env를 튜닝해도 테스트가 안 깨지게)
+_TEST_THRESHOLD = 0.5
+
+
 @pytest.fixture()
 def fake_services(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """리랭커 HTTP 호출과 parent_store.get_parent를 가짜로 대체한다."""
+    """리랭커 HTTP 호출·parent_store·임계값을 가짜로 고정한다."""
     calls: dict[str, Any] = {"scores": []}
 
     def fake_post(url: str, json: dict, timeout: float) -> _FakeResponse:
@@ -38,7 +43,11 @@ def fake_services(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(rerank_module.requests, "post", fake_post)
     monkeypatch.setattr(rerank_module.parent_store, "get_parent", lambda pid: _PARENTS.get(pid, ""))
-    return calls
+    # 임계값을 .env와 무관하게 고정 (env 튜닝에 테스트가 흔들리지 않게)
+    monkeypatch.setenv("RERANK_SCORE_THRESHOLD", str(_TEST_THRESHOLD))
+    get_config.cache_clear()
+    yield calls
+    get_config.cache_clear()
 
 
 def _candidate(chunk_id: str, parent_id: str, source_doc: str = "휴가규정.md") -> dict:
@@ -56,7 +65,8 @@ def test_점수순_top_n_확정_후_부모로_치환된다(fake_services: dict) 
         _candidate("c2", "p2"),
         _candidate("c3", "p_없음"),
     ]
-    fake_services["scores"] = [0.2, 0.9, 0.5]  # c2 > c3 > c1
+    # 전부 임계값(기본 0.5) 이상 — 정렬·부모 치환만 검증한다
+    fake_services["scores"] = [0.6, 0.9, 0.7]  # c2 > c3 > c1
 
     result = rerank_module.rerank(
         {"question": "질문", "rewritten_query": "검색 쿼리", "retrieved_candidates": candidates}
@@ -67,6 +77,7 @@ def test_점수순_top_n_확정_후_부모로_치환된다(fake_services: dict) 
     assert chunks[0]["text"] == _PARENTS["p2"]  # 최고점 c2 → 부모 p2로 치환
     assert chunks[1]["text"] == "자식 청크 c3"  # 부모 조회 실패 → 자식 텍스트 폴백
     assert chunks[0]["rerank_score"] == 0.9
+    assert chunks[2]["text"] == _PARENTS["p1"]  # 최저점 c1도 임계값 이상이면 포함
     assert all("source_doc" in c for c in chunks)
 
 
@@ -93,6 +104,39 @@ def test_후보가_없으면_빈_결과(fake_services: dict) -> None:
         {"question": "질문", "rewritten_query": "검색 쿼리", "retrieved_candidates": []}
     )
     assert result == {"retrieved_chunks": []}
+
+
+def test_임계값_미만_후보는_근거에서_제외된다(fake_services: dict) -> None:
+    """무관 문서(0.0x 점수)가 top_n을 채워 컨텍스트·출처를 오염시키는 것 방지.
+
+    실측 분포: 관련 청크는 0.6+, 무관 청크는 0.05 미만으로 극명하게 갈린다.
+    """
+    candidates = [
+        _candidate("c1", "p1", "휴가규정.md"),
+        _candidate("c2", "p2", "무관문서.pdf"),
+        _candidate("c3", "p_없음", "무관문서2.pdf"),
+    ]
+    fake_services["scores"] = [0.99, 0.04, 0.01]  # 관련 1건 + 무관 2건 (실측 패턴)
+
+    result = rerank_module.rerank(
+        {"question": "질문", "rewritten_query": "검색 쿼리", "retrieved_candidates": candidates}
+    )
+    chunks = result["retrieved_chunks"]
+    assert len(chunks) == 1  # 기본 임계값(0.5) 미만은 탈락
+    assert chunks[0]["source_doc"] == "휴가규정.md"
+
+
+def test_전부_임계값_미만이면_근거_없음으로_fail_closed_유도(fake_services: dict) -> None:
+    fake_services["scores"] = [0.4, 0.01]  # 애매한 점수도 기본 임계값 0.5 미만
+    result = rerank_module.rerank(
+        {
+            "question": "질문",
+            "rewritten_query": "검색 쿼리",
+            "retrieved_candidates": [_candidate("c1", "p1"), _candidate("c2", "p2")],
+        }
+    )
+    # 근거 0건 → generate가 빈 초안 → verify fail-closed → fallback 답변
+    assert result["retrieved_chunks"] == []
 
 
 def test_리랭커_호출에_timeout이_지정된다(fake_services: dict) -> None:

@@ -87,7 +87,7 @@ mars-ai-server/
 │           ├── fuse.py
 │           ├── rerank.py       # top_n=5 확정 + 부모 치환
 │           ├── generate.py
-│           └── verify.py       # LLM 검증 + 규칙 기반 검증 이중화
+│           └── verify.py       # LLM 근거 검증 (fail-closed)
 ├── serving/
 │   ├── start_vllm.sh           # L40 운영 서빙
 │   ├── start_llm_dev.ps1       # 개발 노트북 llama.cpp 서빙 (vLLM 대체)
@@ -109,7 +109,9 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
                                     ↑          │
                           (실패, 재시도 여유)  │
                              increment_retry ←─┤
-                                                │
+                                                ├→ (근거 0건 + 전체검색)
+                                                │   knowledge_answer → END
+                                                │   (LLM 자체 지식, 검증 미거침)
                     (성공) finalize / (소진) fallback — 도구 답변 + 문서 답변을
                                                         계획 순서로 코드 합성
 ```
@@ -137,13 +139,29 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
 5. **rerank** — 리랭커 서버 호출 → top_n=5 확정 → 그 5개만 부모 청크로 치환
 6. **generate** — 근거 기반 답변 생성. 프롬프트에는 원본 질문과 rewritten_query를
    **둘 다** 포함시켜 검색-생성 미스매치를 모델이 감지할 여지를 남긴다
-7. **verify** — 이중 검증:
-   - 1차 규칙 기반: draft_answer의 수치/날짜/문서명이 retrieved_chunks에 실재하는지
-   - 2차 LLM 기반: VerifyAnswer tool-call. tool_call 실패 시 grounded=False (fail-closed)
+7. **verify** — LLM 근거 검증 (VerifyAnswer tool-call):
+   - 전제 검사(코드): 답변이 비었거나 근거 0건이면 LLM 호출 없이 grounded=False
+   - 판정: tool_call 실패·예외 시에도 grounded=False (fail-closed)
+   - 수치/문서명을 근거 문자열과 대조하던 규칙 검증은 제거했다. 부분 문자열
+     대조라 정밀도가 낮아 오탐·오통과가 반복됐고, LLM 검증이 그 몫을 온전히
+     대신하는 것을 실측으로 확인했다 (지어낸 일수·이월 한도·기한·조항 번호를
+     전부 탈락시키고, 규칙이 못 하던 근거와의 **모순**까지 판별)
 8. **finalize / increment_retry / fallback** — 성공 시 도구 답변(tool_answers)과
    문서 답변을 계획 순서로 합성해 확정 (코드 조립만 — verify 뒤 LLM 가공 금지),
    실패 시 MAX_VERIFY_RETRY(=1)까지 generate만 재실행 (도구는 재실행 안 함),
-   소진 시 문서 파트만 안전한 대체 답변으로 바꿔 합성
+   소진 시 문서 파트만 안전한 대체 답변으로 바꿔 합성.
+   finalize 뒤에는 남은 **후처리 도구**(POST_SEARCH_TOOLS — HWP_EXPORT 등,
+   방금 확정된 답변을 입력으로 쓰는 도구)가 순차 실행된다. fallback 경로는
+   후처리를 건너뛴다 (검증 실패 답변을 파일 등으로 만들지 않음)
+9. **knowledge_answer** — 검색이 **근거를 하나도 못 찾았고** 도메인을 한정하지
+   않았을 때, 정형 사과 문구 대신 LLM 자체 지식으로 답한다
+   (`KNOWLEDGE_FALLBACK_ENABLED`로 끌 수 있음). 재시도보다 **앞에** 분기한다 —
+   근거가 0건이면 재생성해도 빈 초안이 반복될 뿐이라 무의미하다.
+   ⚠️ **이 경로는 verify를 거치지 않는다.** 대신 SSE `notice` 이벤트
+   (`code=ungrounded_knowledge`)로 문서 근거가 없음을 알리고, 감사 로그에
+   `answer_mode="knowledge"`로 남겨 사후 추적이 가능하게 한다.
+   근거가 **있는데** 검증에서 떨어진 경우는 이 경로로 보내지 않는다 —
+   모델이 수치를 지어냈다는 신호이므로 검증 없이 확정하면 안 된다 (fail-closed)
 
 dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 구현 단순성을 위해 순차부터 시작한다.
@@ -196,3 +214,21 @@ dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 2. document_parents에서 부모 청크 삭제
 3. indexer_graph로 재적재
 4. BM25 인덱스는 부분 삭제 불가 → **전체 재빌드** (야간 배치 전제로 설계)
+
+## 10. 적재 원본 보관 주체 (미들웨어)
+
+관리자 페이지에서 올린 문서 **원본의 영속 보관 주체는 미들웨어(자기 DB)**다.
+MARS는 인덱싱 엔진이자 임시 처리 공간이며, 생성 파일(§8 EXPORT_DIR)의
+fetch-and-store와 대칭 구조다:
+
+- 미들웨어가 원본을 사용자·업로드 이력과 매핑해 영속 저장하고, MARS로는
+  `POST /documents`로 바이트를 relay한다 (전송 방향은 항상 미들웨어→MARS
+  인바운드 — 에어갭 아웃바운드 금지와 정합)
+- MARS는 받은 원본을 청킹·임베딩·색인(Milvus·BM25)하고, 원본은 `UPLOAD_DIR`에
+  **임시 스테이징**한다. 색인 결과는 영속, 스테이징 원본은 임시(TTL 정리는
+  향후 도입 — roadmap 미확정 항목)
+- 서버 재구축(Milvus 초기화) 시 재적재 원천: 운영은 미들웨어가 원본 재전송,
+  개발은 `scripts/bulk_ingest.py`로 sample_docs 재적재. MARS 로컬 원본 소실에
+  의존하지 않는다
+- `GET /documents`(관리 목록)는 ACL을 적용하지 않아 DEPT_ONLY 문서명까지
+  노출하므로, 미들웨어가 관리자 권한 확인 후에만 프록시한다 (interfaces.md §5)

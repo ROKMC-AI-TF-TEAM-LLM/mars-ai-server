@@ -74,22 +74,59 @@ def test_JSON이_없거나_깨졌으면_None() -> None:
 # ---------- call_with_schema: 토큰 상한 + 예시 기반 재시도 ----------
 
 
-def test_구조화_호출은_토큰_상한을_걸고_재시도는_예시_JSON을_쓴다() -> None:
-    """1차엔 max_tokens=512(장문 답변 폭주 차단), 재시도엔 256 + 예시 JSON.
+def test_주_경로는_json_schema_문법_강제다() -> None:
+    """실측: A.X-4.0-Light는 문서가 200자만 넘어도 tool-call 대신 산문을 낸다.
+    json_schema는 디코딩이 스키마를 강제해 모델 협조 없이도 구조화 출력이 나온다
+    (같은 근거 3,196토큰에서 tool-call 0/3, json_object 0/3, json_schema 3/3)."""
+    fake = _FakeLLM(
+        SimpleNamespace(tool_calls=[], content='{"grounded": true, "reason": "문서에 근거함"}')
+    )
+    calls = 0
 
-    재시도 프롬프트에 스키마 정의(properties)를 넣으면 작은 모델이 타입
-    정의를 값처럼 복사한다 (실측) — 예시 형태만 노출한다.
-    """
-    first = _FakeLLM(SimpleNamespace(tool_calls=[], content="질문에 대한 장황한 답변만 있음"))
+    def getter() -> _FakeLLM:
+        nonlocal calls
+        calls += 1
+        return fake
+
+    result = call_with_schema([HumanMessage("검증하라")], _Schema, llm_getter=getter)
+
+    assert result == {"grounded": True, "reason": "문서에 근거함"}
+    assert calls == 1  # 1차에서 끝난다 (폴백 호출 없음)
+    fmt = fake.bind_kwargs["response_format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["name"] == "_Schema"
+    assert fmt["json_schema"]["strict"] is True
+    assert fmt["json_schema"]["schema"]["additionalProperties"] is False
+    assert fake.bind_kwargs["max_tokens"] == 512  # 장문 폭주 차단
+
+
+def test_json_schema_실패하면_tool_call로_폴백한다() -> None:
+    """json_schema 미지원 서빙 대비 경로."""
+    first = _FakeLLM(SimpleNamespace(tool_calls=[], content="스키마에 안 맞는 산문"))
+    second = _FakeLLM(
+        SimpleNamespace(
+            tool_calls=[{"name": "_Schema", "args": {"grounded": False, "reason": "근거 없음"}}],
+            content="",
+        )
+    )
+    fakes = iter([first, second])
+    result = call_with_schema([HumanMessage("검증하라")], _Schema, llm_getter=lambda: next(fakes))
+    assert result == {"grounded": False, "reason": "근거 없음"}
+
+
+def test_마지막_폴백은_예시_JSON을_보여준다() -> None:
+    """재시도 프롬프트에 스키마 정의(properties)를 넣으면 작은 모델이 타입
+    정의를 값처럼 복사한다 (실측) — 예시 형태만 노출한다."""
+    prose = SimpleNamespace(tool_calls=[], content="질문에 대한 장황한 답변만 있음")
+    first, second = _FakeLLM(prose), _FakeLLM(prose)
     retry = _FakeLLM(
         SimpleNamespace(tool_calls=[], content='{"grounded": true, "reason": "문서에 근거함"}')
     )
-    fakes = iter([first, retry])
+    fakes = iter([first, second, retry])
 
     result = call_with_schema([HumanMessage("검증하라")], _Schema, llm_getter=lambda: next(fakes))
 
     assert result == {"grounded": True, "reason": "문서에 근거함"}
-    assert first.bind_kwargs["max_tokens"] == 512
     assert retry.bind_kwargs["max_tokens"] == 256
     assert retry.bind_kwargs["response_format"] == {"type": "json_object"}
 

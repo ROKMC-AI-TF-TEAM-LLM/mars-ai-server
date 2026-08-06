@@ -61,6 +61,7 @@ class QueryState(TypedDict):
     intents: Optional[list[str]]                 # 처리 계획 (복수 가능). 순서 = 최종 답변 합성 순서
     pending_intents: Optional[list[str]]         # 남은 실행 큐 (도구 먼저, DOC_SEARCH는 마지막)
     tool_answers: Optional[list[dict]]           # 도구 실행 결과 누적 [{"intent": str, "answer": str}]
+    generated_files: Optional[list[dict]]        # 도구 생성 파일 [{"name", "url", "tool"}] → SSE file 이벤트
     domain: Optional[str]                        # (예약) 과거 라우터 분류 자리 — 현재 미사용
     dense_candidates: Optional[list[dict]]       # dense 검색 top_k개
     bm25_candidates: Optional[list[dict]]        # bm25 검색 top_k개
@@ -74,6 +75,10 @@ class QueryState(TypedDict):
     verify_reason: Optional[str]
     retry_count: int
     final_answer: Optional[str]
+    # 답변이 만들어진 경로: "grounded"(검증 통과) | "knowledge"(근거 0건 →
+    # LLM 자체 지식, 검증 미거침) | "fallback"(검증 실패·범위 밖 → 정형 안내).
+    # 도구 단독 경로(SMALLTALK 등)는 None. 감사 로그·SSE notice 이벤트가 쓴다
+    answer_mode: Optional[str]
 ```
 
 ## 4. 함수 시그니처
@@ -134,18 +139,21 @@ def trim_history(history: list[dict], max_tokens: int = 1500) -> list[dict]:
     """최근 턴부터 역순으로 채우고 상한 초과분 절삭. 문자수/2.2 근사 사용."""
 
 # query_graph/nodes/verify.py
-def rule_based_verify(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[bool, str]:
-    """1차 규칙 검증: draft_answer에 등장하는 숫자, 날짜, 문서명이
-    retrieved_chunks 텍스트에 실재하는지 확인. (통과 여부, 사유) 반환.
-    실패하면 LLM 검증 없이 즉시 grounded=False."""
+def check_preconditions(draft_answer: str, retrieved_chunks: list[dict]) -> tuple[bool, str]:
+    """LLM에 판정을 물을 수 있는 상태인지 확인. (가능 여부, 사유) 반환.
+    답변이 비었거나 근거 청크가 0건이면 LLM 호출 없이 grounded=False.
+    내용의 근거 여부는 판단하지 않는다 — 그 판정은 LLM 검증이 전담한다."""
 
 # shared/llm_client.py
 def get_llm() -> "ChatOpenAI": ...   # @lru_cache(maxsize=1)
 
 # shared/audit_log.py
 def log_query(user_department: str, question: str, domain: str,
-              sources: list[str], grounded: bool) -> None:
-    """JSONL append. 경로는 config.AUDIT_LOG_PATH."""
+              sources: list[str], grounded: bool,
+              answer_mode: str | None = None) -> None:
+    """JSONL append. 경로는 config.AUDIT_LOG_PATH.
+    answer_mode는 답변 경로 — grounded만으로는 "검증 실패"와
+    "근거 없이 LLM 지식으로 답함"이 구분되지 않는다."""
 
 # main.py (미들웨어 경계)
 def to_internal_history(messages: list[dict]) -> list[dict]:
@@ -155,8 +163,11 @@ def to_internal_history(messages: list[dict]) -> list[dict]:
 def sse_event(payload: dict) -> str:
     """dict → 'data: {json}\n\n' SSE 프레임. ensure_ascii=False."""
 
-async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → {"type": "done"} 종료 이벤트.
+async def stream_answer(final_answer: str, sources: list[dict],
+                        files: list[dict] | None = None,
+                        notice: dict | None = None) -> AsyncIterator[str]:
+    """확정된 답변을 text로 분할 전송 → file 0회 이상 → notice 0~1회 →
+    sources 1회 → {"type": "done"} 종료 이벤트.
     분할 단위는 문장 경계 우선(다./요./.), 없으면 80자 내외."""
 ```
 
@@ -224,7 +235,7 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 
 **응답** (Content-Type: text/event-stream):
 
-이벤트는 `data: {JSON}\n\n` 형식. 타입 4종 + 종료 신호:
+이벤트는 `data: {JSON}\n\n` 형식. 타입 6종 + 종료 신호:
 
 ```
 data: {"type":"status","stage":"retrieve","message":"사내 문서를 검색하는 중..."}
@@ -234,6 +245,10 @@ data: {"type":"status","stage":"generate","message":"답변을 생성하는 중.
 data: {"type":"text","content":"육아휴직은"}
 
 data: {"type":"text","content":" 최대 1년까지 사용할 수 있습니다."}
+
+data: {"type":"file","name":"MARS_답변_20260720_1e7bdc.hwpx","url":"/files/MARS_%EB%8B%B5%EB%B3%80_20260720_1e7bdc.hwpx","tool":"HWP_EXPORT"}
+
+data: {"type":"notice","level":"warning","code":"ungrounded_knowledge","message":"이 답변은 내부 문서에서 근거를 찾지 못해 AI의 일반 지식으로 작성한 것입니다. ..."}
 
 data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
 
@@ -247,6 +262,19 @@ data: {"type":"done"}
   프론트는 message를 로딩 인디케이터로 표시하고 첫 text 수신 시 제거한다.
   복합 계획이면 tool → retrieve처럼 stage가 여러 번 바뀔 수 있다.
   클라이언트는 미지의 type·stage를 무시(문구만 표시)하도록 구현한다 (향후 확장 대비)
+- `file`(0회 이상): 도구가 생성한 파일(HWPX 등)의 **구조화 신호**.
+  text 전송이 끝난 뒤 sources 전에 온다. 필드: `name`(파일명),
+  `url`(/files/{URL인코딩 파일명}), `tool`(생성 도구 — HWP_EXPORT 등).
+  **미들웨어는 이 이벤트를 fetch-and-store의 트리거로 쓴다** — 답변 text
+  속 다운로드 문구는 사람용 표시일 뿐이므로 정규식으로 파싱하지 않는다
+- `notice`(0~1회): **답변 자체에 대한 경고**. text·file 뒤, sources 앞에 온다.
+  필드: `level`(warning) | `code`(표시 방식을 고르는 기준) | `message`(완성 문구).
+  code 값: `ungrounded_knowledge` — 검색 근거를 찾지 못해 **LLM 자체 지식으로
+  작성**한 답변이다 (검증을 거치지 않았고 sources는 빈 목록).
+  **프론트는 이 이벤트를 답변과 시각적으로 구분해 표시해야 한다** — 표시하지
+  않으면 문서 근거 없는 내용이 일반 답변과 똑같이 보인다. code를 모르는
+  클라이언트는 message를 그대로 띄우면 된다.
+  서버 쪽 발동 조건은 config.KNOWLEDGE_FALLBACK_ENABLED로 끌 수 있다
 
 오류 시:
 
@@ -308,6 +336,24 @@ data: {"type":"done"}
 
 ### 우리 서버 문서 관리 API (9000)
 
+이 API 4종(POST/GET/DELETE /documents, GET /documents/jobs)은 **관리자 페이지**의
+데이터 소스다. 미들웨어가 관리자 권한을 확인한 뒤 프록시한다 (MARS는 자체
+인증·권한이 없다 — 내부망 신뢰).
+
+**적재 원본 관리 계약 (생성 파일 fetch-and-store와 대칭)**:
+
+- **원본의 영속 보관 주체는 미들웨어(자기 DB)다.** 관리자가 올린 문서 원본을
+  미들웨어가 사용자·업로드 이력과 매핑해 자기 저장소에 보관하고, MARS로는
+  `POST /documents`로 바이트를 relay한다.
+- **MARS는 인덱싱 엔진이자 임시 처리 공간이다.** 받은 원본을 청킹·임베딩·
+  색인(Milvus·BM25)하고, 원본은 `UPLOAD_DIR`에 스테이징한다. 색인 결과는
+  영속이지만 스테이징 원본은 임시다 (TTL 정리는 향후 도입 — roadmap 미확정).
+- **서버 재구축(Milvus 초기화) 시 재적재 원천**: 운영은 미들웨어가 원본을
+  다시 `POST /documents`로 전송, 개발은 `scripts/bulk_ingest.py`로 sample_docs
+  재적재. → MARS 로컬 원본 소실에 의존하지 않는다.
+- 에어갭 정합: 전송 방향은 항상 미들웨어→MARS 인바운드다. MARS가 미들웨어로
+  원본을 되돌려 push하지 않는다 (아웃바운드 금지, CLAUDE.md).
+
 **`POST /documents?name=...&domain=...&department=...&visibility=ALL`** — 적재/갱신
 
 - 본문: **파일 바이트 그대로** (`Content-Type: application/octet-stream`).
@@ -316,7 +362,8 @@ data: {"type":"done"}
 - 쿼리 파라미터: `name`(필수, 파일명 — 경로 성분은 제거됨),
   `domain`(필수, config.DOMAINS 중 하나 — 검색 필터와 달리 엄격 검증),
   `department`(DEPT_ONLY면 필수), `visibility`(`ALL` 기본 | `DEPT_ONLY`)
-- 지원 형식 `.md`/`.txt`/`.pdf` (텍스트 파일은 UTF-8, 스캔본 PDF 실패), 최대 50MB
+- 지원 형식 `.md`/`.txt`/`.pdf` (텍스트 인코딩은 UTF-8·UTF-8 BOM·CP949 자동
+  인식 — Windows 메모장 저장 대응. 스캔본 PDF 실패), 최대 50MB
 - 같은 `name`이 이미 적재돼 있으면 **갱신**(기존 청크 삭제 후 재적재).
   텍스트 추출 검증을 삭제보다 먼저 수행해 추출 실패 시 기존 데이터를 보존한다
 - 응답 **202** + 작업(job) 객체. 적재는 백그라운드 실행 (임베딩 소요 시간 때문):
@@ -331,19 +378,70 @@ data: {"type":"done"}
 ```
 
 - 적재/삭제 작업은 **한 번에 하나만 실행**된다 (BM25 전체 재빌드 직렬화).
-  나머지는 순서 대기. 원본 파일은 `UPLOAD_DIR`에 보관된다
+  나머지는 순서 대기. 원본 파일은 `UPLOAD_DIR`에 **임시 스테이징**된다
+  (영속 보관은 미들웨어 — 위 "적재 원본 관리 계약" 참조)
 - 400: 파라미터 오류(형식·도메인·빈 본문), 413: 크기 초과
+
+**`GET /documents?offset=0&limit=20&domain=...`** — 적재 문서 목록 (관리 페이지용)
+
+- 응답: `{documents: [{name, type, domain, visibility, owning_department,
+  applied_at}], total, offset, limit, has_more}` (무한 스크롤, 문서명 오름차순)
+- **ACL을 적용하지 않는다** — `visibility=DEPT_ONLY` 문서의 존재(문서명·소유
+  부서)까지 노출된다. `/query`와 달리 user_department 필터가 없다
+- **미들웨어는 관리자 권한을 확인한 뒤에만 프록시할 것.** 일반 사용자 화면에
+  그대로 내보내면 DEPT_ONLY 문서명이 새어나간다
 
 **`GET /documents/jobs/{job_id}`** — 작업 상태 조회 (위와 같은 객체).
 상태 전이 `queued → running → done | error`. **인메모리 이력**이라 서버
 재시작 시 404 (적재된 청크는 유지). `GET /documents/jobs?limit=20`은
-최근 작업 목록(최신순)
+최근 작업 목록(최신순). 관리자 페이지가 진행 상태를 오래 보존해야 하면
+미들웨어가 job_id·상태를 자기 DB에 미러링하는 것을 권한다 (MARS는 인메모리)
 
 **`DELETE /documents/{name}`** — 문서 삭제 (name은 URL 인코딩)
 
 - 자식·부모 청크 삭제 후 BM25 전체 재빌드. **동기 처리** — 수 초~수십 초
 - 응답: `{"name": str, "deleted_chunks": int, "deleted_parents": int}`
 - 404: 미적재 문서, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
+
+### 우리 서버 `GET /files/{name}` (9000) — 생성 문서 다운로드
+
+- 도구(HWP_EXPORT 등)가 만든 문서 파일을 내려받는다. `name`·경로는 SSE
+  `file` 이벤트의 `name`/`url` 값을 그대로 쓴다 (한글은 URL 인코딩)
+- 파일은 `EXPORT_DIR`(기본 ./data/exports)에서만 서빙된다 — 경로 성분이
+  섞인 이름은 400, 없는 파일은 404. Content-Disposition으로 파일명 전달됨
+- **본 엔드포인트는 접근 제어가 없다** (내부망 신뢰 — 본 서버는 사용자
+  신원을 모른다). 파일 소유권·인증이 필요한 전달은 아래 미들웨어 책임
+
+**미들웨어 권장 흐름 (fetch-and-store — 최종 보관은 미들웨어)**:
+
+1. SSE `{"type": "file", "name", "url", "tool"}` 이벤트를 감지한다 —
+   파일 생성의 공식 신호다 (답변 text 속 다운로드 문구는 사람용 표시일
+   뿐이며 형식이 바뀔 수 있으므로 파싱하지 않는다)
+2. 감지 즉시 본 서버 `GET /files/{name}`으로 파일을 가져와 **미들웨어
+   저장소(DB 등)에 로그인 사용자·대화와 매핑해 저장**한다 (HWPX는 수 KB~
+   수십 KB라 DB BLOB로 충분)
+3. 프론트에는 미들웨어 자체 다운로드 URL로 치환해 전달한다 — 접근 제어
+   (본인만 다운로드), 대화와의 수명 주기(대화 삭제 시 파일 삭제), 다운로드
+   감사 추적이 전부 미들웨어에서 가능해진다
+4. 본 서버의 EXPORT_DIR은 **임시 보관소**다 — 새 파일 생성 시점에
+   `EXPORT_TTL_HOURS`(기본 24시간)가 지난 파일이 자동 삭제된다(기회적 정리).
+   미들웨어는 file 이벤트 수신 즉시(늦어도 TTL 안에) 가져가야 하며, 이후
+   보존은 미들웨어 책임이다. 단순 프록시 방식은 접근 제어·보존이 없어
+   차선책이다
+
+- **HWP_EXPORT** 도구: 답변을 **있는 그대로** 한글 2014+ 표준 HWPX로
+  내보낸다. 후처리 도구(tools.POST_SEARCH_TOOLS) — 복합 질문("휴가 규정
+  찾아서 한글 파일로 저장해줘")이면 검색 파이프라인 **뒤에** 실행되어 방금
+  검증·확정된 답변을 파일로 만들고, 단독 요청("이 답변 저장해줘")이면 직전
+  답변(마지막 ai 메시지)을 쓴다. 검증 실패(fallback) 답변은 파일로 만들지
+  않는다. 강제 지정 허용(FORCIBLE — 프론트 "답변 저장" 버튼은
+  `tool=HWP_EXPORT`로 호출)
+- **HWP_DRAFT** 도구: 사용자가 요청에 담아 준 내용으로 **새 문서 초안**
+  (공문·보고서 등)을 LLM으로 작성해 HWPX로 저장한다 ("이 내용으로 공문
+  초본 잡아서 파일로 생성해줘"). verify 밖 LLM 생성이므로 "제공된 내용만
+  재구성, 없는 정보는 [빈칸] 표시" 원칙을 프롬프트로 강제하고, 답변에
+  초안 미리보기를 함께 담는다. 단독 전용, 강제 지정 허용.
+  서식(휴가신청서 등) 고정 템플릿 채우기는 향후 확장 항목
 
 ## 6. Tool 스키마 (vLLM `--tool-call-parser hermes`로 파싱)
 
@@ -410,6 +508,9 @@ RERANKER_DEVICE=cuda
 RERANKER_MODEL_PATH=./models/bge-reranker-v2-m3 # 로컬 경로만 (Hub ID 금지)
 RERANK_TOP_K=20
 RERANK_TOP_N=5
+# 리랭크 점수 하한(0~1). 미만 후보는 top_n 이내라도 근거·출처에서 제외
+# (무관 문서의 컨텍스트 오염·출처 오표기 방지 — 실측: 관련 0.6+/무관 0.05 미만). 0=비활성
+RERANK_SCORE_THRESHOLD=0.5
 
 # --- Milvus Lite (임베디드) ---
 MILVUS_LITE_PATH=./data/milvus_ax.db
@@ -424,12 +525,27 @@ SEARCH_TOP_K=20
 # --- 파이프라인 ---
 MAX_VERIFY_RETRY=1
 HISTORY_MAX_TOKENS=1500
+# generate(답변 생성) 전용 온도. 라우터·검증은 0 고정 (분류·판정 재현성),
+# 잡담(SMALLTALK)은 코드 상수 0.7. 0이면 verify 재시도가 사실상 같은 답을 재생성함
+GENERATE_TEMPERATURE=0.2
+
+# 검색 근거가 0건일 때(도메인 미지정 한정) 정형 사과 문구 대신 LLM 자체
+# 지식으로 답할지. true면 답변에 SSE notice(code=ungrounded_knowledge)가
+# 따라붙는다. ⚠️ 이 경로는 verify를 거치지 않으므로, 프론트가 notice를
+# 표시하지 않는 상태로 켜지 않을 것
+KNOWLEDGE_FALLBACK_ENABLED=true
 
 # --- 감사 로그 ---
 AUDIT_LOG_PATH=./data/audit_log.jsonl
 
 # --- 문서 업로드 저장 경로 (POST /documents 원본 보관) ---
 UPLOAD_DIR=./data/uploads
+
+# --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
+EXPORT_DIR=./data/exports
+
+# --- 생성 문서 보관 시간(시간). 새 파일 생성 시 만료분 자동 정리. 0=비활성 ---
+EXPORT_TTL_HOURS=24
 
 # --- 외부 서비스 호출 공통 timeout(초). CPU 임베딩 등 느린 환경은 늘린다 ---
 HTTP_TIMEOUT_SECONDS=60

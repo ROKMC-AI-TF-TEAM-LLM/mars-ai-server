@@ -7,23 +7,17 @@
 
 from __future__ import annotations
 
-import math
 import uuid
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from ax_rag.shared.config import CHARS_PER_TOKEN
+from ax_rag.shared.tokens import approx_tokens
 
 # 한국어 구조 인식 분할 우선순위 (architecture.md §6 단계 2)
 _SEPARATORS = ["\n##", "\n###", "\n\n", "\n", "다.", "요.", ".", ""]
 
 # 자식 청크 간 중첩 (검색 경계 손실 완화). 부모는 생성 컨텍스트 중복을 피해 중첩 없음
 _CHILD_OVERLAP_TOKENS = 30
-
-
-def _approx_token_len(text: str) -> int:
-    """한국어 토큰 수 근사: 문자수 / 2.2 올림."""
-    return math.ceil(len(text) / CHARS_PER_TOKEN)
 
 
 def _make_header(source_doc: str, section_title: str | None) -> str:
@@ -41,7 +35,7 @@ def _split(text: str, chunk_size_tokens: int, overlap_tokens: int) -> list[str]:
         separators=_SEPARATORS,
         chunk_size=chunk_size_tokens,
         chunk_overlap=overlap_tokens,
-        length_function=_approx_token_len,
+        length_function=approx_tokens,
         keep_separator="end",
     )
     return [piece.strip() for piece in splitter.split_text(text) if piece.strip()]

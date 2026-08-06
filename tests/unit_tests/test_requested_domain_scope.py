@@ -96,7 +96,8 @@ class _FakeClient:
 @pytest.fixture()
 def fake_dense(monkeypatch: pytest.MonkeyPatch) -> _FakeClient:
     fake = _FakeClient()
-    monkeypatch.setattr(dense_module, "_embed_query", lambda q: [0.0] * 1024)
+    # 다중 쿼리 배치 임베딩: 쿼리 수만큼 벡터를 돌려준다
+    monkeypatch.setattr(dense_module, "_embed_queries", lambda qs: [[0.0] * 1024 for _ in qs])
     monkeypatch.setattr(dense_module, "get_client", lambda: fake)
     monkeypatch.setattr(dense_module, "get_collection", lambda: "company_docs")
     return fake

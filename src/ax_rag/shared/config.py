@@ -58,6 +58,12 @@ class Config:
     RERANKER_MODEL_PATH: str  # 로컬 경로만 허용 (Hub ID 금지)
     RERANK_TOP_K: int
     RERANK_TOP_N: int
+    # 리랭크 점수 하한 (0~1). 이 미만 후보는 top_n 이내라도 근거·출처에서
+    # 제외한다. bge-reranker 점수는 관련(0.6+)/무관(0.05 미만)으로 극명하게
+    # 갈리는 분포(실측)라 그 사이 값이면 무관 문서를 안정적으로 걸러낸다.
+    # 0이면 비활성 (기존 동작). 코퍼스가 커져 중간 점수대가 생기면
+    # 평가셋으로 재조정할 것 (roadmap 6단계)
+    RERANK_SCORE_THRESHOLD: float
 
     # --- Milvus Lite (임베디드) ---
     MILVUS_LITE_PATH: str
@@ -72,12 +78,47 @@ class Config:
     # --- 파이프라인 ---
     MAX_VERIFY_RETRY: int
     HISTORY_MAX_TOKENS: int
+    # generate 노드 전용 온도 (기본 0.2). 라우터·verify는 0 고정(분류·판정
+    # 재현성), 답변 생성만 살짝 올려 문장 자연스러움 + verify 재시도 시
+    # 실질적으로 다른 초안이 나오게 한다 (0이면 재생성해도 사실상 같은 답).
+    #
+    # 0.3으로 올려 봤다가 되돌렸다 — 정성 평가에서 fallback 5/13 → 8/13,
+    # 평균 답변 길이 322자 → 171자로 악화. 답변이 길어지면서 근거 밖 문장이
+    # 섞일 표면적도 함께 커졌고, 긴 답변을 내던 훈령·법령 문항 3개가 전부
+    # 무너졌다. 근거 준수의 통제 수단은 온도가 아니라 프롬프트다
+    GENERATE_TEMPERATURE: float
+
+    # 검색 근거를 하나도 못 찾았을 때, 정형 사과 문구 대신 LLM의 자체 지식으로
+    # 답변할지 여부. 도메인 미지정(전체 검색) + 근거 0건일 때만 발동한다
+    # (graph._can_answer_from_knowledge).
+    #
+    # ⚠️ 이 경로는 verify를 거치지 않는다 — 모델이 규정을 지어내도 걸러지지
+    # 않는다. 같은 위험이 SMALLTALK 강제 지정에서 실측돼 구조적으로 차단된
+    # 전례가 있다 (tools.FORCIBLE_TOOLS 주석). 답변에는 SSE notice 이벤트로
+    # "문서 근거 없음" 경고가 따라붙으며, 프론트가 그 이벤트를 처리하지 않으면
+    # 경고 없이 노출되므로 배포 시 프론트 대응 여부를 확인할 것
+    KNOWLEDGE_FALLBACK_ENABLED: bool
 
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
-    # --- 문서 업로드 저장 경로 (POST /documents가 받은 파일 원본 보관) ---
+    # --- 자기 자신(MARS API) 주소. 평가·비교 스크립트가 /query를 호출할 때만 쓴다.
+    # 서버 코드는 이 값을 쓰지 않는다 (자기 자신을 HTTP로 부르지 않음) ---
+    MARS_SERVER_URL: str = "http://localhost:9000"
+
+    # --- 문서 업로드 임시 스테이징 경로 (POST /documents가 받은 파일 원본) ---
+    # 원본의 영속 보관 주체는 미들웨어(자기 DB)다. MARS는 청킹·임베딩·색인만
+    # 한다. 여기 스테이징된 로컬 원본의 TTL 정리는 향후 도입 예정
+    # (계획: docs/roadmap.md 미확정 항목 — UPLOAD_TTL_HOURS)
     UPLOAD_DIR: str = "./data/uploads"
+
+    # --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
+    EXPORT_DIR: str = "./data/exports"
+
+    # 생성 문서 보관 시간(시간 단위). 새 파일 생성 시점에 만료분을 정리한다
+    # (기회적 정리 — 미들웨어가 file 이벤트로 즉시 가져가므로 임시 보관이면 충분).
+    # 0 이하면 정리 비활성
+    EXPORT_TTL_HOURS: int = 24
 
     # --- 외부 서비스 호출 공통 timeout (초) ---
     HTTP_TIMEOUT_SECONDS: float = 60.0
@@ -90,7 +131,12 @@ class Config:
 
     def __post_init__(self) -> None:
         """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다."""
-        for name in ("AX_BASE_URL", "EMBEDDING_SERVER_URL", "RERANKER_SERVER_URL"):
+        for name in (
+            "AX_BASE_URL",
+            "EMBEDDING_SERVER_URL",
+            "RERANKER_SERVER_URL",
+            "MARS_SERVER_URL",
+        ):
             url: str = getattr(self, name)
             host = urlparse(url).hostname
             if host not in _ALLOWED_HOSTS:
@@ -117,6 +163,17 @@ def _env_float(key: str, default: float) -> float:
     return float(value) if value else default
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    """환경변수 불리언 조회. 비어 있으면 기본값.
+
+    참으로 보는 값: 1, true, yes, on (대소문자 무관). 그 외는 거짓.
+    """
+    value = os.environ.get(key, "").strip().lower()
+    if not value:
+        return default
+    return value in ("1", "true", "yes", "on")
+
+
 @lru_cache(maxsize=1)
 def get_config() -> Config:
     """설정 싱글턴. 최초 호출 시 .env를 로드한다."""
@@ -133,14 +190,20 @@ def get_config() -> Config:
         RERANKER_MODEL_PATH=_env_str("RERANKER_MODEL_PATH", "./models/bge-reranker-v2-m3"),
         RERANK_TOP_K=_env_int("RERANK_TOP_K", 20),
         RERANK_TOP_N=_env_int("RERANK_TOP_N", 5),
+        RERANK_SCORE_THRESHOLD=_env_float("RERANK_SCORE_THRESHOLD", 0.5),
         MILVUS_LITE_PATH=_env_str("MILVUS_LITE_PATH", "./data/milvus_ax.db"),
         MILVUS_COLLECTION=_env_str("MILVUS_COLLECTION", "company_docs"),
         BM25_INDEX_PATH=_env_str("BM25_INDEX_PATH", "./data/bm25_index"),
         SEARCH_TOP_K=_env_int("SEARCH_TOP_K", 20),
         MAX_VERIFY_RETRY=_env_int("MAX_VERIFY_RETRY", 1),
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
+        GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
+        KNOWLEDGE_FALLBACK_ENABLED=_env_bool("KNOWLEDGE_FALLBACK_ENABLED", True),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
+        MARS_SERVER_URL=_env_str("MARS_SERVER_URL", "http://localhost:9000"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),
+        EXPORT_DIR=_env_str("EXPORT_DIR", "./data/exports"),
+        EXPORT_TTL_HOURS=_env_int("EXPORT_TTL_HOURS", 24),
         HTTP_TIMEOUT_SECONDS=_env_float("HTTP_TIMEOUT_SECONDS", 60.0),
         LOG_LEVEL=_env_str("LOG_LEVEL", "INFO"),
         STREAM_TEXT_INTERVAL_MS=_env_int("STREAM_TEXT_INTERVAL_MS", 200),

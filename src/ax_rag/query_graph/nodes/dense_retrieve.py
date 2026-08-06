@@ -29,20 +29,28 @@ _OUTPUT_FIELDS = [
 ]
 
 
-def _embed_query(query: str) -> list[float]:
-    """임베딩 서버 호출 (localhost, timeout 필수)."""
+def _embed_queries(queries: list[str]) -> list[list[float]]:
+    """임베딩 서버 호출 (localhost, timeout 필수). 여러 쿼리를 1회 호출로 처리한다.
+
+    임베딩 서버가 texts 배열을 받으므로(serving/embedding_server.py) 쿼리가
+    늘어도 HTTP 왕복은 1회다 — 다중 쿼리의 지연 비용이 사실상 없는 이유.
+    """
     config = get_config()
     response = requests.post(
         config.EMBEDDING_SERVER_URL,
-        json={"texts": [query]},
+        json={"texts": queries},
         timeout=config.HTTP_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-    return response.json()["embeddings"][0]
+    return response.json()["embeddings"]
 
 
-def _search(embedding: list[float], expr: str) -> list[dict]:
-    """Milvus 벡터 검색 실행 → 후보 dict 목록."""
+def _search(embedding: list[float], expr: str, query_index: int) -> list[dict]:
+    """Milvus 벡터 검색 실행 → 후보 dict 목록.
+
+    query_index는 어느 검색 쿼리에서 나온 후보인지 표시한다 — fuse가 쿼리별로
+    묶어 융합할 때 쓴다 (상태 형태는 평면 리스트 그대로 유지).
+    """
     hits_per_query = get_client().search(
         get_collection(),
         data=[embedding],
@@ -58,19 +66,32 @@ def _search(embedding: list[float], expr: str) -> list[dict]:
                 # pymilvus는 PK를 "id"가 아니라 실제 필드명(chunk_id) 키로 반환한다
                 "chunk_id": hit["chunk_id"],
                 "dense_score": float(hit["distance"]),
+                "query_index": query_index,
                 **{field: entity.get(field) for field in _OUTPUT_FIELDS},
             }
         )
     return candidates
 
 
+def search_queries_of(state: QueryState) -> list[str]:
+    """검색에 쓸 쿼리 목록 (dense/bm25 공용). 없으면 대표 쿼리 하나로 폴백한다."""
+    queries = [q for q in (state.get("search_queries") or []) if str(q).strip()]
+    return queries or [state.get("rewritten_query") or state["question"]]
+
+
 def dense_retrieve(state: QueryState) -> dict:
-    """벡터 검색 (top_k=SEARCH_TOP_K). 보안 필터 항상 적용, 도메인은 요청 명시 시에만 한정."""
-    query = state.get("rewritten_query") or state["question"]
+    """벡터 검색 (쿼리마다 top_k=SEARCH_TOP_K).
+
+    보안 필터는 항상 적용하고, 도메인은 요청이 명시한 경우에만 한정한다.
+    """
+    queries = search_queries_of(state)
     # 요청이 도메인을 안 정했으면 GENERAL(=도메인 절 없음)로 전 도메인 검색
     scope = state.get("requested_domain") or "GENERAL"
     expr = build_acl_filter_expr(scope, state.get("user_department", ""))
 
-    candidates = _search(_embed_query(query), expr)
-    logger.info("dense 검색: %d건 (filter=%s)", len(candidates), expr)
+    embeddings = _embed_queries(queries)  # 쿼리가 여럿이어도 HTTP 1회
+    candidates: list[dict] = []
+    for index, embedding in enumerate(embeddings):
+        candidates.extend(_search(embedding, expr, index))
+    logger.info("dense 검색: 쿼리 %d개 → %d건 (filter=%s)", len(queries), len(candidates), expr)
     return {"dense_candidates": candidates}

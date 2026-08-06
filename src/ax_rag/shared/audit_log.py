@@ -22,8 +22,15 @@ def log_query(
     domain: str,
     sources: list[str],
     grounded: bool,
+    answer_mode: str | None = None,
 ) -> None:
-    """JSONL append. 경로는 config.AUDIT_LOG_PATH."""
+    """JSONL append. 경로는 config.AUDIT_LOG_PATH.
+
+    answer_mode는 답변이 만들어진 경로다 (state.answer_mode). grounded 불리언
+    하나로는 "검증 실패로 정형 안내를 냈다"와 "근거 없이 LLM 지식으로 답했다"가
+    구분되지 않아, 검증을 거치지 않은 답변이 얼마나 나갔는지 사후에 추적할 수
+    없다. 도구 단독 경로(잡담 등)에서는 None이다.
+    """
     record = {
         "timestamp": datetime.now(UTC).isoformat(),
         "user_department": user_department,
@@ -31,6 +38,7 @@ def log_query(
         "domain": domain,
         "sources": sources,
         "grounded": grounded,
+        "answer_mode": answer_mode,
     }
     path = Path(get_config().AUDIT_LOG_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,7 @@ from ax_rag.query_graph.prompts import (
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
+from ax_rag.query_graph.tool_contract import tool_answer
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -50,4 +51,4 @@ def smalltalk(state: QueryState) -> dict:
 
     logger.info("smalltalk 응답: %s", answer[:80])
     # 문서 근거가 없으므로 grounded=False (sources 미노출), 검색 결과도 비운다
-    return {"final_answer": answer, "grounded": False, "retrieved_chunks": []}
+    return tool_answer(answer)

@@ -12,7 +12,12 @@ class QueryState(TypedDict):
 
     question: str  # 원본 질문 (generate 프롬프트용)
     conversation_history: list[dict] | None  # [{"role": "user"|"assistant", "content": str}]
-    rewritten_query: str | None  # route가 생성한 검색용 쿼리
+    rewritten_query: str | None  # route가 생성한 검색용 쿼리 (대표 쿼리, 리랭크 기준)
+    # 실제로 검색에 쓰이는 쿼리 목록. 첫 항목이 대표 쿼리(rewritten_query)다.
+    # 단일 쿼리는 하나의 의미 이웃만 긁어 다면적 질문에서 근거가 한쪽으로 쏠린다
+    # (실측: "조건·기간·신청 방법"을 물었는데 근거 청크 1건) — 측면별로 나눠
+    # 검색해 후보 폭을 넓힌다. 비어 있으면 rewritten_query 하나로 검색한다
+    search_queries: list[str] | None
     user_department: str
     # 요청이 명시한 검색 도메인 한정 (main.py에서 정규화). 빈 값이면 전 도메인 검색.
     # 검색 필터에 쓰이는 유일한 도메인 값
@@ -27,6 +32,9 @@ class QueryState(TypedDict):
     pending_intents: list[str] | None
     # 도구 실행 결과 누적: [{"intent": str, "answer": str}]. finalize/fallback이 합성
     tool_answers: list[dict] | None
+    # 도구가 생성한 파일 목록: [{"name": str, "url": str, "tool": str}]
+    # main.py가 SSE file 이벤트로 내보낸다 (미들웨어 fetch-and-store 신호)
+    generated_files: list[dict] | None
     domain: str | None  # (예약) 과거 라우터 도메인 분류 자리 — 현재 미사용
     dense_candidates: list[dict] | None  # dense 검색 top_k개
     bm25_candidates: list[dict] | None  # bm25 검색 top_k개 (ACL 후처리 완료분)
@@ -37,4 +45,16 @@ class QueryState(TypedDict):
     grounded: bool | None
     verify_reason: str | None
     retry_count: int
+    # increment_retry가 실어 보내는 직전 반려 사유. generate가 재작성 지시로 쓴다.
+    # verify_reason과 내용은 같지만 소유가 다르다 — 이 값이 있으면 "재생성 중"이라는
+    # 뜻이고, 1차 생성에는 존재하지 않는다
+    retry_hint: str | None
     final_answer: str | None
+    # 답변이 만들어진 경로. grounded 불리언 하나로는 "검증 통과"와 "검증 실패"만
+    # 구분되어, 근거 없이 LLM 지식으로 답한 경우를 사후에 추적할 수 없다.
+    # - "grounded"  : 검증 통과 (finalize)
+    # - "knowledge" : 근거 0건 → LLM 자체 지식으로 답변 (knowledge_answer, 검증 미거침)
+    # - "fallback"  : 검증 실패 또는 도메인 한정 검색 실패 → 정형 안내 문구
+    # 도구 단독 경로(SMALLTALK 등)는 채우지 않는다 (문서 답변 경로가 아니다).
+    # 감사 로그와 SSE notice 이벤트가 이 값을 쓴다
+    answer_mode: str | None

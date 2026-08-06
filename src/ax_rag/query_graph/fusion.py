@@ -25,3 +25,47 @@ def rrf_fuse(
 
     ordered = sorted(scores.items(), key=lambda pair: pair[1], reverse=True)[:top_n]
     return [{**merged[chunk_id], "rrf_score": score} for chunk_id, score in ordered]
+
+
+def merge_query_results(per_query: list[list[dict]], top_n: int) -> list[dict]:
+    """쿼리별 융합 결과를 가중 쿼터로 병합한다 (chunk_id 중복 제거).
+
+    대표 쿼리(첫 항목)가 자리의 **최소 절반**을 갖고, 나머지를 부쿼리들이
+    균등 분배한다. 남는 자리는 순위대로 백필한다.
+
+    균등 분배가 아닌 이유: RERANK_TOP_K가 작을 때(개발 환경 10) 3쿼리 균등이면
+    대표 쿼리 몫이 10 → 3으로 줄어 **기존에 잘 찾던 문서가 밀려난다**. 다중 쿼리는
+    측면을 넓히려는 것이지 대표 쿼리를 희생하려는 것이 아니다.
+    """
+    if not per_query:
+        return []
+    if len(per_query) == 1:
+        return per_query[0][:top_n]
+
+    merged: list[dict] = []
+    seen: set[str] = set()
+
+    def take(items: list[dict], limit: int) -> None:
+        """중복을 건너뛰며 limit개까지 담는다."""
+        taken = 0
+        for item in items:
+            if taken >= limit or len(merged) >= top_n:
+                return
+            chunk_id = item["chunk_id"]
+            if chunk_id in seen:
+                continue
+            seen.add(chunk_id)
+            merged.append(item)
+            taken += 1
+
+    primary_quota = max(1, (top_n + 1) // 2)
+    sub_count = len(per_query) - 1
+    sub_quota = max(1, (top_n - primary_quota) // sub_count)
+
+    take(per_query[0], primary_quota)
+    for sub in per_query[1:]:
+        take(sub, sub_quota)
+    # 쿼터를 다 못 채웠으면(중복·부족) 순위대로 남은 자리를 메운다
+    for items in per_query:
+        take(items, top_n)
+    return merged[:top_n]

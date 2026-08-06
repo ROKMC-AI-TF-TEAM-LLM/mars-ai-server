@@ -71,6 +71,42 @@ def test_빈_PDF는_빈_텍스트를_반환한다(tmp_path: Path) -> None:
     assert text.strip() == ""
 
 
+# ── 인코딩 자동 인식 — 실측: CP949 텍스트 적재 시 UnicodeDecodeError ─────────
+
+
+def test_cp949_텍스트도_읽는다(tmp_path: Path) -> None:
+    """Windows 메모장 기본 저장(CP949·EUC-KR 계열) 파일 적재 대응."""
+    path = tmp_path / "공지.txt"
+    path.write_bytes("훈령에 따라 탄약 관리 절차를 준수한다.".encode("cp949"))
+    text, sections = load_document(path)
+    assert text == "훈령에 따라 탄약 관리 절차를 준수한다."
+    assert sections is None
+
+
+def test_BOM_붙은_UTF8도_읽는다(tmp_path: Path) -> None:
+    path = tmp_path / "규정.md"
+    path.write_bytes("## 연차\n연차는 15일이다.\n".encode("utf-8-sig"))
+    text, sections = load_document(path)
+    assert text.startswith("## 연차")  # BOM이 본문에 남지 않는다
+    assert sections is not None
+
+
+def test_cp949_md도_섹션을_인식한다(tmp_path: Path) -> None:
+    path = tmp_path / "규정.md"
+    path.write_bytes("## 병가\n병가는 60일이다.\n".encode("cp949"))
+    _, sections = load_document(path)
+    assert sections is not None
+    assert [s["title"] for s in sections if s["title"]] == ["병가"]
+
+
+def test_인식_불가_인코딩은_안내와_함께_거부된다(tmp_path: Path) -> None:
+    """UTF-16 등 미지원 인코딩: UnicodeDecodeError 원문 대신 안내 메시지."""
+    path = tmp_path / "공지.txt"
+    path.write_bytes("훈령 안내".encode("utf-16"))  # BOM 없는 utf-8/cp949로 해석 불가
+    with pytest.raises(ValueError, match="인코딩"):
+        load_document(path)
+
+
 def test_미지원_확장자는_거부된다(tmp_path: Path) -> None:
     path = tmp_path / "문서.hwp"
     path.write_text("한글 파일", encoding="utf-8")

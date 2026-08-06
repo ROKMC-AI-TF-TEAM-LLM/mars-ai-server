@@ -46,3 +46,21 @@ def test_모든_필드가_JSONL로_기록된다(audit_path: Path) -> None:
     second = json.loads(lines[1])
     assert second["grounded"] is False
     assert "육아휴직" not in second["question"]  # 한글 원문 유지 확인용 대비군
+
+
+def test_answer_mode로_검증_실패와_지식_답변을_구분한다(audit_path: Path) -> None:
+    """grounded=False 하나로는 '정형 안내를 냈다'와 '근거 없이 LLM 지식으로
+    답했다'가 구분되지 않아, 검증 안 거친 답변이 얼마나 나갔는지 추적할 수 없다."""
+    log_query(
+        user_department="",
+        question="군인 연금은?",
+        domain="ALL",
+        sources=[],
+        grounded=False,
+        answer_mode="knowledge",
+    )
+    log_query(user_department="", question="잡담", domain="ALL", sources=[], grounded=False)
+
+    records = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+    assert records[0]["answer_mode"] == "knowledge"
+    assert records[1]["answer_mode"] is None  # 도구 단독 경로는 미표시

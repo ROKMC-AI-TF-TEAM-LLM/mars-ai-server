@@ -6,14 +6,11 @@
 
 from __future__ import annotations
 
-import math
+# 근사식은 indexer_graph의 청킹과 공유한다 (shared/tokens.py).
+# 이 이름으로도 계속 임포트할 수 있게 재수출한다
+from ax_rag.shared.tokens import approx_tokens
 
-from ax_rag.shared.config import CHARS_PER_TOKEN
-
-
-def approx_tokens(text: str) -> int:
-    """한국어 토큰 수 근사: 문자수 / 2.2 올림."""
-    return math.ceil(len(text) / CHARS_PER_TOKEN)
+__all__ = ["approx_tokens", "trim_history"]
 
 
 def trim_history(history: list[dict], max_tokens: int = 1500) -> list[dict]:

@@ -117,6 +117,89 @@ def test_route_긴_질문은_매처_히트여도_LLM을_태우고_병합한다(
     assert result["pending_intents"] == ["DISCHARGE_DAYS", "DOC_SEARCH"]
 
 
+@pytest.mark.parametrize(
+    ("polluted", "expected"),
+    [
+        ("해병대 관련 내용을 조사하여 문서로 만들어줘", "해병대 관련 내용"),
+        ("휴가 규정 찾아서 파일로 만들어줘", "휴가 규정"),
+        ("탄약 훈령 요약해서 한글 파일로 저장해줘", "탄약 훈령"),
+        ("위 내용을 문서화해줘", "위 내용"),
+        ("휴가 제도", "휴가 제도"),  # 파일 표현 없으면 그대로 (명사 "제도" 보존)
+        ("문서 검색해줘", "문서 검색해줘"),  # "문서"만으로는 제거 안 함
+    ],
+)
+def test_strip_file_phrases_파일요청_표현을_걷어낸다(polluted: str, expected: str) -> None:
+    """실측: 재작성 쿼리에 '문서로 만들어줘'가 남으면 리랭크 점수가 30배
+    붕괴(0.738→0.022)해 검색이 전멸한다. 결정적 정리로 검색어만 남긴다."""
+    assert router_module._strip_file_phrases(polluted) == expected
+
+
+def test_strip_file_phrases_전부_제거되면_원본_유지() -> None:
+    """검색어가 실종될 정도로 깎이면 오염된 원본이라도 유지한다 (빈 쿼리 방지)."""
+    assert router_module._strip_file_phrases("문서로 만들어줘") == "문서로 만들어줘"
+
+
+def test_route_검색_파일_복합계획이면_쿼리를_정리한다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM이 재작성에서 파일 요청 표현을 못 뗀 경우 코드가 정리한다."""
+    fake = _FakeLLM(
+        _classify_response(
+            "해병대 관련 내용을 조사하여 문서로 만들어줘", ["DOC_SEARCH", "HWP_EXPORT"]
+        )
+    )
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": "해병대 관련 내용을 조사하고 문서를 만들어줘"})
+    assert result["intents"] == ["DOC_SEARCH", "HWP_EXPORT"]
+    assert result["rewritten_query"] == "해병대 관련 내용"  # 오염 제거됨
+
+
+def test_HWP_EXPORT_설명은_한글없는_문서표현도_포함한다() -> None:
+    """라우터 프롬프트 계약: '문서 만들어줘'(한글 없음)도 HWP_EXPORT로 분류되게
+    설명이 '한글'에 얽매이지 않아야 한다 (실측: 좁은 설명이라 복합 의도 유실)."""
+    from ax_rag.query_graph.nodes.router import ROUTER_SYSTEM_PROMPT
+    from ax_rag.query_graph.tools import TOOL_DESCRIPTIONS
+
+    desc = TOOL_DESCRIPTIONS["HWP_EXPORT"]
+    assert "문서로 만들어줘" in desc  # 한글 없는 표현 포함
+    assert "DOC_SEARCH, HWP_EXPORT" in desc  # 검색+저장 복합 예시
+    assert "HWP_EXPORT" in ROUTER_SYSTEM_PROMPT  # 프롬프트에 실제 반영
+
+
+def test_TOOL_HANDLED_LABELS는_전_도구를_예시없이_커버한다() -> None:
+    """generate/verify 안내문 계약: 라우터용 예시 문구가 안내문에 실리면 7B
+    검증기가 답변 내용으로 착각해 grounded=false 오탐 (실측: '해병대 조사해서
+    문서로 만들어줘' 예시가 실제 질문 주제와 겹칠 때). 라벨은 예시 금지."""
+    from ax_rag.query_graph.tools import TOOL_HANDLED_LABELS, TOOL_NODES
+
+    for name in TOOL_NODES:
+        assert name in TOOL_HANDLED_LABELS  # 새 도구 등록 시 라벨도 필수
+    for label in TOOL_HANDLED_LABELS.values():
+        assert "예:" not in label and "만들어줘" not in label and "줘" not in label
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "규정 찾아서 한글 파일로 저장해줘",
+        "해병대에 대해서 조사하고 한글 문서로 만들어줘",  # "조사" — 실측 유실 케이스
+        "휴가 규정 정리해서 한글 문서로 저장해줘",
+        "탄약 훈령 요약해서 한글 파일로 만들어줘",
+    ],
+)
+def test_route_짧아도_검색_힌트가_있으면_LLM을_병행한다(
+    monkeypatch: pytest.MonkeyPatch, question: str
+) -> None:
+    """검색 선행 표현(찾아·조사·정리·요약 등)이 섞인 짧은 질문이 매처 단독으로
+    검색 없이 저장만 실행되는 사고 방지 — 힌트가 있으면 LLM 분류를 태운다."""
+    fake = _FakeLLM(_classify_response("검색 쿼리", ["DOC_SEARCH"]))
+    monkeypatch.setattr(router_module, "get_llm", lambda: fake)
+    result = router_module.route({"question": question})
+    assert fake.captured_messages is not None  # LLM 호출됨 (단독 종결 아님)
+    assert result["intents"] == ["DOC_SEARCH", "HWP_EXPORT"]  # 매처 도구 병합
+    assert result["pending_intents"] == ["DOC_SEARCH", "HWP_EXPORT"]  # 검색 → 후처리 순
+
+
 def test_route_LLM_실패해도_매처_확정_도구는_잃지_않는다(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -251,6 +334,50 @@ def test_fallback은_도구_답변을_유지하고_문서_파트만_대체한다
     )
 
 
+# ---------- fallback: 도메인 한정 검색 안내 ----------
+
+
+def test_도메인_한정_검색에서_근거_0건이면_범위를_알려준다() -> None:
+    """실측: 훈령(DIRECTIVE) 한정 상태로 휴가를 물으면 근거가 0건이 된다
+    (휴가규정.md는 HR 적재). "문서가 없다"가 아니라 "이 범위에 없다"로 안내해야
+    사용자가 범위를 좁혀둔 걸 알아챈다."""
+    answer = fallback({"requested_domain": "DIRECTIVE", "retrieved_chunks": []})["final_answer"]
+    assert "훈령" in answer  # DOMAIN_LABELS의 한글 라벨
+    assert "전체" in answer  # 조치 안내
+    assert answer != FALLBACK_ANSWER
+
+
+def test_도메인_한정이어도_근거가_있었으면_기본_문구다() -> None:
+    """근거는 찾았는데 검증에서 떨어진 경우(지어낸 수치 등)는 범위 탓이 아니다.
+    범위를 탓하면 엉뚱한 원인을 안내하게 된다."""
+    state = {
+        "requested_domain": "DIRECTIVE",
+        "retrieved_chunks": [{"text": "본문", "source_doc": "훈령.pdf"}],
+    }
+    assert fallback(state)["final_answer"] == FALLBACK_ANSWER
+
+
+def test_도메인_한정이_없으면_기본_문구다() -> None:
+    assert fallback({"retrieved_chunks": []})["final_answer"] == FALLBACK_ANSWER
+    assert (
+        fallback({"requested_domain": "", "retrieved_chunks": []})["final_answer"]
+        == FALLBACK_ANSWER
+    )
+
+
+def test_도메인_한정_안내도_도구_답변을_유지한다() -> None:
+    """범위 안내로 바뀌어도 도구 답변(결정적 산출물) 합성은 그대로다."""
+    state = {
+        "intents": ["DISCHARGE_DAYS", "DOC_SEARCH"],
+        "tool_answers": _TOOL_ANSWERS,
+        "requested_domain": "MANUAL",
+        "retrieved_chunks": [],
+    }
+    answer = fallback(state)["final_answer"]
+    assert answer.startswith("전역일까지 D-100, 100일 남았습니다.\n\n")
+    assert "교범" in answer  # MANUAL의 한글 라벨
+
+
 # ---------- generate: 도구 처리분 중복 답변 방지 ----------
 
 
@@ -274,7 +401,7 @@ def test_generate는_도구가_처리한_요청을_답하지_말라고_안내한
     )
     user_text = fake.captured_messages[-1].content
     assert "답하지 말고" in user_text  # 중복 답변 방지 안내 존재
-    assert "전역" in user_text  # 도구 유형 설명(TOOL_DESCRIPTIONS) 포함
+    assert "전역" in user_text  # 도구 유형 라벨(TOOL_HANDLED_LABELS) 포함
     assert (
         "D-140" not in user_text and "140일" not in user_text
     )  # 수치는 미포함 (규칙 검증 오탐 방지)

@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import (
+    GENERATE_RETRY_TEMPLATE,
     GENERATE_SYSTEM_PROMPT,
     GENERATE_TOOL_HANDLED_TEMPLATE,
     GENERATE_USER_TEMPLATE,
@@ -17,7 +18,7 @@ from ax_rag.query_graph.prompts import (
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
-from ax_rag.query_graph.tools import TOOL_DESCRIPTIONS
+from ax_rag.query_graph.tools import format_handled_note
 from ax_rag.shared.config import get_config
 from ax_rag.shared.llm_client import get_llm
 from ax_rag.shared.logging_setup import get_logger
@@ -25,17 +26,15 @@ from ax_rag.shared.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
-def _tool_handled_note(state: QueryState) -> str:
-    """복합 계획에서 도구가 이미 처리한 요청 유형을 안내하는 꼬리 프롬프트.
+def _retry_note(state: QueryState) -> str:
+    """재생성이면 직전 반려 사유를 재작성 지시로 만든다 (1차 생성이면 빈 문자열).
 
-    도구 답변의 수치는 넣지 않는다 — 초안에 섞이면 rule_based_verify가
-    "근거에 없는 수치"로 오탐한다. 유형 설명(TOOL_DESCRIPTIONS)만 전달한다.
+    increment_retry가 실어 보낸 retry_hint가 있을 때만 붙는다.
     """
-    handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
-    if not handled:
+    hint = str(state.get("retry_hint") or "").strip()
+    if not hint:
         return ""
-    lines = "\n".join(f"- {TOOL_DESCRIPTIONS.get(name, name)}" for name in handled if name)
-    return GENERATE_TOOL_HANDLED_TEMPLATE.format(handled=lines)
+    return GENERATE_RETRY_TEMPLATE.format(reason=hint)
 
 
 def generate(state: QueryState) -> dict:
@@ -48,18 +47,32 @@ def generate(state: QueryState) -> dict:
 
     config = get_config()
     history = trim_history(state.get("conversation_history") or [], config.HISTORY_MAX_TOKENS)
-    user_prompt = GENERATE_USER_TEMPLATE.format(
-        documents=format_documents(chunks),
-        question=state["question"],
-        rewritten_query=state.get("rewritten_query") or state["question"],
-    ) + _tool_handled_note(state)
-    response = get_llm().invoke(
-        [
-            SystemMessage(GENERATE_SYSTEM_PROMPT),
-            *history_to_messages(history),
-            HumanMessage(user_prompt),
-        ]
+    user_prompt = (
+        GENERATE_USER_TEMPLATE.format(
+            documents=format_documents(chunks),
+            question=state["question"],
+            rewritten_query=state.get("rewritten_query") or state["question"],
+        )
+        + format_handled_note(state, GENERATE_TOOL_HANDLED_TEMPLATE)
+        + _retry_note(state)
+    )
+    # 답변 생성만 설정 온도로 호출한다 (기본 0.2 — 문장 자연스러움 + 재시도
+    # 다양성). 라우터·verify는 get_llm() 기본값 0 유지 (분류·판정 재현성)
+    response = (
+        get_llm()
+        .bind(temperature=config.GENERATE_TEMPERATURE)
+        .invoke(
+            [
+                SystemMessage(GENERATE_SYSTEM_PROMPT),
+                *history_to_messages(history),
+                HumanMessage(user_prompt),
+            ]
+        )
     )
     draft = str(response.content).strip()
-    logger.info("답변 초안 생성: %d자", len(draft))
+    logger.info(
+        "답변 초안 생성: %d자%s",
+        len(draft),
+        " (반려 사유 반영 재생성)" if _retry_note(state) else "",
+    )
     return {"draft_answer": draft}

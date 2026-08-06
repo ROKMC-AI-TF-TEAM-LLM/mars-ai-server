@@ -72,7 +72,8 @@ def test_dense는_SEARCH_TOP_K를_limit으로_넘긴다(
         return [[]]
 
     fake_client = type("FakeClient", (), {"search": staticmethod(fake_search)})()
-    monkeypatch.setattr(dense_module, "_embed_query", lambda q: [0.0] * 1024)
+    # 다중 쿼리 배치 임베딩: 쿼리 수만큼 벡터를 돌려준다
+    monkeypatch.setattr(dense_module, "_embed_queries", lambda qs: [[0.0] * 1024 for _ in qs])
     monkeypatch.setattr(dense_module, "get_client", lambda: fake_client)
     monkeypatch.setattr(dense_module, "get_collection", lambda: "company_docs")
 

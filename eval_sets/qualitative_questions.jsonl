@@ -1,0 +1,30 @@
+{"id": "fact-01", "type": "단일 사실", "question": "육아휴직은 최대 얼마나 쓸 수 있나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "휴가규정", "note": "기준 유형 — 답변이 짧아도 정상"}
+{"id": "fact-02", "type": "단일 사실", "question": "연차가 다음 해로 넘어가면 며칠까지 인정되나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "휴가규정", "note": "기준 유형"}
+{"id": "multi-01", "type": "다면적", "question": "휴가 규정 전반에 대해 알려줘", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "휴가규정", "note": "sources 문서 수와 다루는 항목 수가 늘어야 함"}
+{"id": "multi-02", "type": "다면적(부분 정답)", "question": "휴가 종류에는 어떤 것들이 있고 각각 신청 절차는 어떻게 되나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "휴가규정", "note": "★ '신청 절차'는 문서에 없고 '휴가 종류'만 있다. 종류 부분은 답하고 절차는 모른다고 밝혀야 정답"}
+{"id": "multi-03", "type": "다면적", "question": "국방 데이터 관리 훈령의 주요 내용과 적용 범위를 알려줘", "user_department": "HR_TEAM", "domain": "DIRECTIVE", "expect": "answer", "expected_source": "국방데이터 관리", "note": "훈령 도메인 다면적 질문"}
+{"id": "synth-01", "type": "종합·집계", "question": "휴가 종류가 몇 가지인지와 각각 며칠인지 정리해줘", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "휴가규정", "note": "개수·일수 종합. 리랭크 경계선 문항(실측 0.138)"}
+{"id": "synth-02", "type": "정답 없음", "question": "연차와 특별휴가를 합치면 최대 며칠을 쉴 수 있나요?", "user_department": "HR_TEAM", "expect": "fallback", "note": "★ fallback이 정답 — '특별휴가'는 휴가규정.md에 없다(0건). 근거 없는 합산을 지어내지 않는지 보는 안전장치"}
+{"id": "synth-03", "type": "종합·집계", "question": "육아휴직 제도를 조건, 기간, 신청 방법으로 나눠서 설명해줘", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "휴가규정", "note": "조건·기간은 문서에 있고 신청 방법은 없다. 있는 부분만 답해야 정답"}
+{"id": "domain-01", "type": "법령", "question": "국가를 당사자로 하는 계약에 관한 법률의 목적이 뭔가요?", "user_department": "HR_TEAM", "domain": "FINANCE_LEGAL", "expect": "answer", "expected_source": "국가를 당사자로", "note": "법령 도메인 동작 확인"}
+{"id": "domain-02", "type": "훈령", "question": "탄약 안전관리에서 지켜야 할 기본 원칙은?", "user_department": "HR_TEAM", "domain": "DIRECTIVE", "expect": "answer", "expected_source": "탄약", "note": "훈령 도메인 동작 확인"}
+{"id": "guard-01", "type": "근거 없음", "question": "우주군 창설 계획이 어떻게 되나요?", "user_department": "HR_TEAM", "expect": "fallback", "note": "★ 안전장치 — 코퍼스에 없는 주제. 지어낸 답이 나오면 회귀"}
+{"id": "guard-02", "type": "범위 밖", "question": "휴가규정 알려줘", "user_department": "HR_TEAM", "domain": "DIRECTIVE", "expect": "fallback", "note": "★ 안전장치 — 도메인 한정 안내 문구가 나와야 정상 (휴가규정은 HR 적재)"}
+{"id": "guard-03", "type": "잡담", "question": "안녕! 너는 뭘 할 수 있어?", "user_department": "HR_TEAM", "expect": "answer", "note": "★ 안전장치 — SMALLTALK 경로. sources는 비어야 정상"}
+{"id": "org-01", "type": "단일 사실", "question": "해병대의 주임무는 무엇인가요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국군조직법", "note": "국군조직법 제3조 — 상륙작전"}
+{"id": "org-02", "type": "단일 사실", "question": "국군은 어떤 군으로 조직되어 있나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국군조직법", "note": "제2조 — 육군·해군·공군, 해군에 해병대"}
+{"id": "org-03", "type": "단일 사실", "question": "해병대사령부는 어떤 업무를 관장하나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "해병대사령부", "note": "직제 제2조 — 정책·소요제기·편성·교육훈련·인사·군수·작전"}
+{"id": "org-04", "type": "단일 사실", "question": "해병대사령관이 부득이한 사유로 직무를 수행할 수 없을 때 누가 대행하나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "해병대사령부", "note": "직제 제3조 — 부사령관"}
+{"id": "dir-01", "type": "훈령", "question": "탄약 및 폭발물 안전관리 훈령은 어떤 기관과 시설에 적용되나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "탄약", "note": "제3조 — 국방부 본부·직할, 육해공군, 방사청, 한국군 관리 미군탄약시설"}
+{"id": "dir-02", "type": "훈령", "question": "탄약 안전에 관한 규정이 다른 훈령과 충돌하면 어느 것이 우선 적용되나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "탄약", "note": "제4조 — 이 규정이 우선"}
+{"id": "dir-03", "type": "훈령", "question": "국방데이터 관리 훈령에서 데이터 품질은 무엇을 뜻하나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국방데이터 관리", "note": "제2조 — 최신성·정확성·상호연계성"}
+{"id": "dir-04", "type": "훈령", "question": "학습용 데이터란 무엇인가요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국방데이터", "note": "국방데이터 관리 훈령 제2조 — AI 학습 목적으로 정제·가공한 국방데이터"}
+{"id": "dir-05", "type": "훈령", "question": "국방데이터·인공지능업무 훈령은 어떤 기관에 적용되나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국방데이터·인공지능", "note": "제3조 — 국방부·합참·각군·방사청·국과연·국방연·기품원"}
+{"id": "dir-06", "type": "훈령", "question": "국방정보화책임관협의회의 위원은 누구로 구성되나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국방정보화책임관", "note": "제6조 — 합참 및 각 군 정보화책임관, 간사는 지능정보화정책관"}
+{"id": "deep-01", "type": "대형 문서", "question": "국방통합데이터센터는 정보시스템 운영 결과를 얼마나 자주 보고해야 하나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국방 정보화업무", "note": "★ 349청크에서 특정 조항 찾기 — 분기별 1회 이상"}
+{"id": "deep-02", "type": "대형 문서", "question": "국방 정보화업무 훈령은 어떤 법률에 근거하고 있나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "국방 정보화업무", "note": "★ 제1조 — 국방정보화 기반조성 및 국방정보자원관리에 관한 법률"}
+{"id": "deep-03", "type": "대형 문서", "question": "모두의 AI 실험실 오프라인 거점은 언제까지 몇 개소를 시범 운영하나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "인공지능행동계획", "note": "★ 658청크에서 특정 수치 찾기 — '26년 4분기까지 5개소"}
+{"id": "deep-04", "type": "대형 문서", "question": "AI 시대에 평가 제도와 입시 제도를 혁신해야 하는 배경은 무엇인가요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "인공지능행동계획", "note": "★ 658청크 서술형 — 정답 암기·서열 중심 평가의 한계"}
+{"id": "law-01", "type": "법령", "question": "인공지능기본법의 목적은 무엇인가요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "인공지능 발전과 신뢰", "note": "제1조 — 인공지능의 건전한 발전과 신뢰 기반 조성"}
+{"id": "law-02", "type": "법령", "question": "민간자율인공지능윤리위원회는 무엇을 위해 두나요?", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "인공지능 발전과 신뢰", "note": "제28조 — 윤리원칙 준수"}
+{"id": "law-03", "type": "다면적", "question": "인공지능 관련 법률에서 정부의 제도개선 의무와 전문인력 확보 방안을 알려줘", "user_department": "HR_TEAM", "expect": "answer", "expected_source": "인공지능 발전과 신뢰", "note": "제20·21조 두 측면. 다중 쿼리 검색의 표적"}
