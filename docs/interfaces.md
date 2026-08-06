@@ -75,6 +75,10 @@ class QueryState(TypedDict):
     verify_reason: Optional[str]
     retry_count: int
     final_answer: Optional[str]
+    # 답변이 만들어진 경로: "grounded"(검증 통과) | "knowledge"(근거 0건 →
+    # LLM 자체 지식, 검증 미거침) | "fallback"(검증 실패·범위 밖 → 정형 안내).
+    # 도구 단독 경로(SMALLTALK 등)는 None. 감사 로그·SSE notice 이벤트가 쓴다
+    answer_mode: Optional[str]
 ```
 
 ## 4. 함수 시그니처
@@ -145,8 +149,11 @@ def get_llm() -> "ChatOpenAI": ...   # @lru_cache(maxsize=1)
 
 # shared/audit_log.py
 def log_query(user_department: str, question: str, domain: str,
-              sources: list[str], grounded: bool) -> None:
-    """JSONL append. 경로는 config.AUDIT_LOG_PATH."""
+              sources: list[str], grounded: bool,
+              answer_mode: str | None = None) -> None:
+    """JSONL append. 경로는 config.AUDIT_LOG_PATH.
+    answer_mode는 답변 경로 — grounded만으로는 "검증 실패"와
+    "근거 없이 LLM 지식으로 답함"이 구분되지 않는다."""
 
 # main.py (미들웨어 경계)
 def to_internal_history(messages: list[dict]) -> list[dict]:
@@ -156,8 +163,11 @@ def to_internal_history(messages: list[dict]) -> list[dict]:
 def sse_event(payload: dict) -> str:
     """dict → 'data: {json}\n\n' SSE 프레임. ensure_ascii=False."""
 
-async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → sources 1회 → {"type": "done"} 종료 이벤트.
+async def stream_answer(final_answer: str, sources: list[dict],
+                        files: list[dict] | None = None,
+                        notice: dict | None = None) -> AsyncIterator[str]:
+    """확정된 답변을 text로 분할 전송 → file 0회 이상 → notice 0~1회 →
+    sources 1회 → {"type": "done"} 종료 이벤트.
     분할 단위는 문장 경계 우선(다./요./.), 없으면 80자 내외."""
 ```
 
@@ -225,7 +235,7 @@ async def stream_answer(final_answer: str, sources: list[dict]) -> AsyncIterator
 
 **응답** (Content-Type: text/event-stream):
 
-이벤트는 `data: {JSON}\n\n` 형식. 타입 5종 + 종료 신호:
+이벤트는 `data: {JSON}\n\n` 형식. 타입 6종 + 종료 신호:
 
 ```
 data: {"type":"status","stage":"retrieve","message":"사내 문서를 검색하는 중..."}
@@ -237,6 +247,8 @@ data: {"type":"text","content":"육아휴직은"}
 data: {"type":"text","content":" 최대 1년까지 사용할 수 있습니다."}
 
 data: {"type":"file","name":"MARS_답변_20260720_1e7bdc.hwpx","url":"/files/MARS_%EB%8B%B5%EB%B3%80_20260720_1e7bdc.hwpx","tool":"HWP_EXPORT"}
+
+data: {"type":"notice","level":"warning","code":"ungrounded_knowledge","message":"이 답변은 내부 문서에서 근거를 찾지 못해 AI의 일반 지식으로 작성한 것입니다. ..."}
 
 data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
 
@@ -255,6 +267,14 @@ data: {"type":"done"}
   `url`(/files/{URL인코딩 파일명}), `tool`(생성 도구 — HWP_EXPORT 등).
   **미들웨어는 이 이벤트를 fetch-and-store의 트리거로 쓴다** — 답변 text
   속 다운로드 문구는 사람용 표시일 뿐이므로 정규식으로 파싱하지 않는다
+- `notice`(0~1회): **답변 자체에 대한 경고**. text·file 뒤, sources 앞에 온다.
+  필드: `level`(warning) | `code`(표시 방식을 고르는 기준) | `message`(완성 문구).
+  code 값: `ungrounded_knowledge` — 검색 근거를 찾지 못해 **LLM 자체 지식으로
+  작성**한 답변이다 (검증을 거치지 않았고 sources는 빈 목록).
+  **프론트는 이 이벤트를 답변과 시각적으로 구분해 표시해야 한다** — 표시하지
+  않으면 문서 근거 없는 내용이 일반 답변과 똑같이 보인다. code를 모르는
+  클라이언트는 message를 그대로 띄우면 된다.
+  서버 쪽 발동 조건은 config.KNOWLEDGE_FALLBACK_ENABLED로 끌 수 있다
 
 오류 시:
 
@@ -508,6 +528,12 @@ HISTORY_MAX_TOKENS=1500
 # generate(답변 생성) 전용 온도. 라우터·검증은 0 고정 (분류·판정 재현성),
 # 잡담(SMALLTALK)은 코드 상수 0.7. 0이면 verify 재시도가 사실상 같은 답을 재생성함
 GENERATE_TEMPERATURE=0.2
+
+# 검색 근거가 0건일 때(도메인 미지정 한정) 정형 사과 문구 대신 LLM 자체
+# 지식으로 답할지. true면 답변에 SSE notice(code=ungrounded_knowledge)가
+# 따라붙는다. ⚠️ 이 경로는 verify를 거치지 않으므로, 프론트가 notice를
+# 표시하지 않는 상태로 켜지 않을 것
+KNOWLEDGE_FALLBACK_ENABLED=true
 
 # --- 감사 로그 ---
 AUDIT_LOG_PATH=./data/audit_log.jsonl

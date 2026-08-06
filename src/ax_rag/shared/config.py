@@ -88,6 +88,17 @@ class Config:
     # 무너졌다. 근거 준수의 통제 수단은 온도가 아니라 프롬프트다
     GENERATE_TEMPERATURE: float
 
+    # 검색 근거를 하나도 못 찾았을 때, 정형 사과 문구 대신 LLM의 자체 지식으로
+    # 답변할지 여부. 도메인 미지정(전체 검색) + 근거 0건일 때만 발동한다
+    # (graph._can_answer_from_knowledge).
+    #
+    # ⚠️ 이 경로는 verify를 거치지 않는다 — 모델이 규정을 지어내도 걸러지지
+    # 않는다. 같은 위험이 SMALLTALK 강제 지정에서 실측돼 구조적으로 차단된
+    # 전례가 있다 (tools.FORCIBLE_TOOLS 주석). 답변에는 SSE notice 이벤트로
+    # "문서 근거 없음" 경고가 따라붙으며, 프론트가 그 이벤트를 처리하지 않으면
+    # 경고 없이 노출되므로 배포 시 프론트 대응 여부를 확인할 것
+    KNOWLEDGE_FALLBACK_ENABLED: bool
+
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
@@ -152,6 +163,17 @@ def _env_float(key: str, default: float) -> float:
     return float(value) if value else default
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    """환경변수 불리언 조회. 비어 있으면 기본값.
+
+    참으로 보는 값: 1, true, yes, on (대소문자 무관). 그 외는 거짓.
+    """
+    value = os.environ.get(key, "").strip().lower()
+    if not value:
+        return default
+    return value in ("1", "true", "yes", "on")
+
+
 @lru_cache(maxsize=1)
 def get_config() -> Config:
     """설정 싱글턴. 최초 호출 시 .env를 로드한다."""
@@ -176,6 +198,7 @@ def get_config() -> Config:
         MAX_VERIFY_RETRY=_env_int("MAX_VERIFY_RETRY", 1),
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
+        KNOWLEDGE_FALLBACK_ENABLED=_env_bool("KNOWLEDGE_FALLBACK_ENABLED", True),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         MARS_SERVER_URL=_env_str("MARS_SERVER_URL", "http://localhost:9000"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),

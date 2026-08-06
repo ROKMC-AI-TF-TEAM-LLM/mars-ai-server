@@ -154,6 +154,32 @@ def test_file_이벤트는_text_뒤_sources_앞에_온다() -> None:
     assert file_event["tool"] == "HWP_EXPORT"
 
 
+def test_notice_이벤트는_text_뒤_sources_앞에_온다() -> None:
+    """문서 근거 없는 지식 기반 답변의 경고. 경고문을 답변 텍스트에 섞지 않고
+    별도 타입으로 보내 프론트가 다르게 표시하게 한다 (interfaces.md §5)."""
+    from ax_rag.api.pipeline import _answer_notice
+
+    notice = _answer_notice("knowledge")
+
+    async def gather() -> list[str]:
+        return [frame async for frame in main.stream_answer("답변입니다.", [], [], notice)]
+
+    payloads = [json.loads(f.removeprefix("data: ").strip()) for f in asyncio.run(gather())]
+    assert [p["type"] for p in payloads] == ["text", "notice", "sources", "done"]
+    event = payloads[1]
+    assert event["code"] == "ungrounded_knowledge"  # 프론트가 표시 방식을 고르는 기준
+    assert event["level"] == "warning"
+    assert event["message"]  # code를 모르는 클라이언트도 그대로 띄울 수 있는 완성 문구
+
+
+def test_검증_통과_답변에는_notice가_붙지_않는다() -> None:
+    from ax_rag.api.pipeline import _answer_notice
+
+    assert _answer_notice("grounded") is None
+    assert _answer_notice("fallback") is None
+    assert _answer_notice(None) is None  # 도구 단독 경로(잡담 등)
+
+
 def test_file이_없으면_기존_이벤트_순서_그대로다() -> None:
     frames = _collect("답변입니다.", [])
     types = [json.loads(f.removeprefix("data: ").strip())["type"] for f in frames]

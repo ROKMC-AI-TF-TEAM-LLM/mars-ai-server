@@ -34,6 +34,7 @@ NODE_VERIFY = "verify"
 NODE_FINALIZE = "finalize"
 NODE_INCREMENT_RETRY = "increment_retry"
 NODE_FALLBACK = "fallback"
+NODE_KNOWLEDGE_ANSWER = "knowledge_answer"
 
 
 def _next_stage_status(state: QueryState) -> tuple[str, str] | None:

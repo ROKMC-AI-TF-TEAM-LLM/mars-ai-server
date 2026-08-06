@@ -109,7 +109,9 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
                                     ↑          │
                           (실패, 재시도 여유)  │
                              increment_retry ←─┤
-                                                │
+                                                ├→ (근거 0건 + 전체검색)
+                                                │   knowledge_answer → END
+                                                │   (LLM 자체 지식, 검증 미거침)
                     (성공) finalize / (소진) fallback — 도구 답변 + 문서 답변을
                                                         계획 순서로 코드 합성
 ```
@@ -151,6 +153,15 @@ route ─(계획이 SMALLTALK뿐)→ smalltalk ───────────
    finalize 뒤에는 남은 **후처리 도구**(POST_SEARCH_TOOLS — HWP_EXPORT 등,
    방금 확정된 답변을 입력으로 쓰는 도구)가 순차 실행된다. fallback 경로는
    후처리를 건너뛴다 (검증 실패 답변을 파일 등으로 만들지 않음)
+9. **knowledge_answer** — 검색이 **근거를 하나도 못 찾았고** 도메인을 한정하지
+   않았을 때, 정형 사과 문구 대신 LLM 자체 지식으로 답한다
+   (`KNOWLEDGE_FALLBACK_ENABLED`로 끌 수 있음). 재시도보다 **앞에** 분기한다 —
+   근거가 0건이면 재생성해도 빈 초안이 반복될 뿐이라 무의미하다.
+   ⚠️ **이 경로는 verify를 거치지 않는다.** 대신 SSE `notice` 이벤트
+   (`code=ungrounded_knowledge`)로 문서 근거가 없음을 알리고, 감사 로그에
+   `answer_mode="knowledge"`로 남겨 사후 추적이 가능하게 한다.
+   근거가 **있는데** 검증에서 떨어진 경우는 이 경로로 보내지 않는다 —
+   모델이 수치를 지어냈다는 신호이므로 검증 없이 확정하면 안 된다 (fail-closed)
 
 dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 구현 단순성을 위해 순차부터 시작한다.

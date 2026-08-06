@@ -49,14 +49,22 @@ def split_for_stream(text: str) -> list[str]:
 
 
 async def stream_answer(
-    final_answer: str, sources: list[dict], files: list[dict] | None = None
+    final_answer: str,
+    sources: list[dict],
+    files: list[dict] | None = None,
+    notice: dict | None = None,
 ) -> AsyncIterator[str]:
-    """확정된 답변을 text 이벤트로 분할 전송 → file 0회 이상 → sources 1회 → done.
+    """확정된 답변을 text로 분할 전송 → file 0회 이상 → notice 0~1회 → sources 1회 → done.
 
     file 이벤트는 도구가 생성한 파일(HWPX 등)의 구조화 신호다 — 미들웨어가
     답변 텍스트를 정규식으로 파싱하지 않고 이 이벤트로 fetch-and-store 한다.
     조각 사이 간격(config.STREAM_TEXT_INTERVAL_MS)을 두어 TCP 병합 없이
     순차 도착하게 하고, 프론트에서 타자기 효과가 보이게 한다.
+
+    notice는 답변 자체에 대한 경고(현재는 문서 근거 없는 지식 기반 답변)다.
+    답변 본문 **뒤**, sources **앞**에 보낸다 — 스펙상 sources가 done 직전
+    마지막이어야 하기 때문이다 (interfaces.md §5). 경고 문구를 답변 텍스트에
+    섞지 않고 별도 타입으로 보내므로 프론트가 다르게 표시할 수 있다.
     """
     interval_seconds = get_config().STREAM_TEXT_INTERVAL_MS / 1000
     pieces = split_for_stream(final_answer)
@@ -68,6 +76,9 @@ async def stream_answer(
     for file_info in files or []:
         logger.debug("SSE file: %s", file_info.get("name"))
         yield sse_event({"type": "file", **file_info})
+    if notice:
+        logger.debug("SSE notice: %s", notice.get("code"))
+        yield sse_event({"type": "notice", **notice})
     logger.debug("SSE sources: %s", [s["name"] for s in sources])
     yield sse_event({"type": "sources", "items": sources})
     logger.debug("SSE done")

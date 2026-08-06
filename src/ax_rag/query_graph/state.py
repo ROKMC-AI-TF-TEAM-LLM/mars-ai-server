@@ -50,3 +50,11 @@ class QueryState(TypedDict):
     # 뜻이고, 1차 생성에는 존재하지 않는다
     retry_hint: str | None
     final_answer: str | None
+    # 답변이 만들어진 경로. grounded 불리언 하나로는 "검증 통과"와 "검증 실패"만
+    # 구분되어, 근거 없이 LLM 지식으로 답한 경우를 사후에 추적할 수 없다.
+    # - "grounded"  : 검증 통과 (finalize)
+    # - "knowledge" : 근거 0건 → LLM 자체 지식으로 답변 (knowledge_answer, 검증 미거침)
+    # - "fallback"  : 검증 실패 또는 도메인 한정 검색 실패 → 정형 안내 문구
+    # 도구 단독 경로(SMALLTALK 등)는 채우지 않는다 (문서 답변 경로가 아니다).
+    # 감사 로그와 SSE notice 이벤트가 이 값을 쓴다
+    answer_mode: str | None

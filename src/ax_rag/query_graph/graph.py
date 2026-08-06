@@ -8,6 +8,7 @@ route ─(계획이 단독 전용 도구뿐)→ TOOL_NODES[도구] → END      
                                 → generate → verify
 verify 후 조건부 분기:
 - grounded=True            → finalize (도구 답변 + 문서 답변을 계획 순서로 합성)
+- 실패 + 근거 0건 + 전체검색 → knowledge_answer (LLM 자체 지식, 검증 미거침 + 경고)
 - 실패 + 재시도 여유 있음  → increment_retry → generate 재실행 (도구는 재실행 안 함)
 - 실패 + 재시도 소진       → fallback (도구 답변은 유지, 문서 파트만 대체 답변)
 
@@ -26,6 +27,7 @@ from ax_rag.query_graph.nodes.bm25_retrieve import bm25_retrieve
 from ax_rag.query_graph.nodes.dense_retrieve import dense_retrieve
 from ax_rag.query_graph.nodes.fuse import fuse
 from ax_rag.query_graph.nodes.generate import generate
+from ax_rag.query_graph.nodes.knowledge_answer import generate_knowledge_answer
 from ax_rag.query_graph.nodes.rerank import rerank
 from ax_rag.query_graph.nodes.router import route
 from ax_rag.query_graph.nodes.verify import verify
@@ -38,6 +40,7 @@ from ax_rag.query_graph.stages import (
     NODE_FUSE,
     NODE_GENERATE,
     NODE_INCREMENT_RETRY,
+    NODE_KNOWLEDGE_ANSWER,
     NODE_RERANK,
     NODE_ROUTE,
     NODE_VERIFY,
@@ -82,6 +85,7 @@ def finalize(state: QueryState) -> dict:
     return {
         "final_answer": _compose_final(state, state.get("draft_answer") or ""),
         "pending_intents": pending,
+        "answer_mode": "grounded",
     }
 
 
@@ -126,7 +130,53 @@ def fallback(state: QueryState) -> dict:
         state.get("requested_domain") or "전체",
         len(state.get("retrieved_chunks") or []),
     )
-    return {"final_answer": _compose_final(state, _fallback_answer(state))}
+    return {
+        "final_answer": _compose_final(state, _fallback_answer(state)),
+        "answer_mode": "fallback",
+    }
+
+
+def _can_answer_from_knowledge(state: QueryState) -> bool:
+    """지식 기반 답변(검증 없는 경로)을 허용할 상황인지 판정한다.
+
+    세 조건을 **모두** 만족할 때만 참이다:
+    1) 설정 스위치가 켜져 있다 (운영에서 코드 수정 없이 끌 수 있게)
+    2) 도메인을 한정하지 않았다 — 한정 검색의 실패는 "문서에 없음"이 아니라
+       "이 범위에 없음"이라, 범위를 넓히라고 안내하는 쪽이 옳다
+    3) 근거 청크가 0건이다 — ⚠️ 가장 중요한 조건. 근거가 있는데 검증에서
+       떨어진 경우는 **모델이 수치를 지어냈다는 신호**이므로, 검증 없는 경로로
+       내보내면 지어낸 내용을 그대로 확정하게 된다 (fail-closed 원칙 유지)
+    """
+    if not get_config().KNOWLEDGE_FALLBACK_ENABLED:
+        return False
+    if state.get("requested_domain"):
+        return False
+    return not (state.get("retrieved_chunks") or [])
+
+
+def knowledge_answer(state: QueryState) -> dict:
+    """검색 근거가 없을 때 LLM 자체 지식으로 답한다 (검증 미거침).
+
+    답변에는 SSE notice 이벤트로 "문서 근거 없음" 경고가 따라붙는다
+    (api/pipeline.py). grounded는 False로 유지하므로 출처는 붙지 않는다.
+
+    도구 답변(D-day 계산 등)이 있으면 함께 합성한다. 이때 경고는 답변 전체를
+    가리키게 되어 결정적 도구 산출물까지 포함하지만, 경고가 과한 쪽이 안전하다.
+
+    생성에 실패하면 정형 안내로 되돌린다 — answer_mode도 fallback이 되어
+    경고 이벤트가 붙지 않는다.
+    """
+    answer = generate_knowledge_answer(state)
+    if not answer:
+        return {
+            "final_answer": _compose_final(state, _fallback_answer(state)),
+            "answer_mode": "fallback",
+        }
+    logger.warning(
+        "검색 근거 0건 → 지식 기반 답변으로 응답 (질문=%s, 검증 미거침)",
+        state.get("question"),
+    )
+    return {"final_answer": _compose_final(state, answer), "answer_mode": "knowledge"}
 
 
 def _make_post_tool_step(
@@ -218,9 +268,17 @@ def after_finalize(state: QueryState) -> str:
 
 
 def after_verify(state: QueryState) -> str:
-    """verify 결과에 따른 분기: finalize / increment_retry / fallback."""
+    """verify 결과에 따른 분기: finalize / knowledge_answer / increment_retry / fallback.
+
+    지식 답변 판정을 **재시도보다 앞에** 둔다. 근거가 0건이면 generate가 빈
+    초안을 내고 verify가 즉시 떨어뜨리므로, 재생성해도 결과가 같다 (실측 로그:
+    빈 초안 → 검증 실패 → 재생성 → 또 빈 초안 → fallback). 앞에 두면 무의미한
+    재시도가 사라져 응답이 그만큼 빨라진다.
+    """
     if state.get("grounded"):
         return NODE_FINALIZE
+    if _can_answer_from_knowledge(state):
+        return NODE_KNOWLEDGE_ANSWER
     if (state.get("retry_count") or 0) < get_config().MAX_VERIFY_RETRY:
         return NODE_INCREMENT_RETRY
     return NODE_FALLBACK
@@ -238,6 +296,7 @@ def _build_graph() -> StateGraph:
     builder.add_node(NODE_FINALIZE, finalize)
     builder.add_node(NODE_INCREMENT_RETRY, increment_retry)
     builder.add_node(NODE_FALLBACK, fallback)
+    builder.add_node(NODE_KNOWLEDGE_ANSWER, knowledge_answer)
 
     # 도구 레지스트리 자동 배선: 노드 이름 = intent 값.
     # - 단독 전용(TERMINAL_ONLY): 종착 노드 (→ END)
@@ -285,6 +344,7 @@ def _build_graph() -> StateGraph:
             NODE_FINALIZE: NODE_FINALIZE,
             NODE_INCREMENT_RETRY: NODE_INCREMENT_RETRY,
             NODE_FALLBACK: NODE_FALLBACK,
+            NODE_KNOWLEDGE_ANSWER: NODE_KNOWLEDGE_ANSWER,
         },
     )
     builder.add_edge(NODE_INCREMENT_RETRY, NODE_GENERATE)
@@ -292,6 +352,9 @@ def _build_graph() -> StateGraph:
     # fallback은 후처리 없이 바로 종료 — 검증 실패 답변은 파일 등으로 후처리하지 않는다
     builder.add_conditional_edges(NODE_FINALIZE, after_finalize, post_targets)
     builder.add_edge(NODE_FALLBACK, END)
+    # 지식 답변도 fallback과 같이 후처리 없이 종료한다 — 검증을 거치지 않은
+    # 답변을 파일 등으로 후처리하지 않는다
+    builder.add_edge(NODE_KNOWLEDGE_ANSWER, END)
     return builder
 
 

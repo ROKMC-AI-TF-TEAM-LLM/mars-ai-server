@@ -16,6 +16,7 @@ from ax_rag.api.normalize import normalize_requested_domain, normalize_tool, to_
 from ax_rag.api.schemas import QueryRequest
 from ax_rag.api.sse import sse_event, stream_answer
 from ax_rag.query_graph.graph import graph
+from ax_rag.query_graph.prompts import KNOWLEDGE_ANSWER_NOTICE
 from ax_rag.query_graph.stages import status_after_node
 from ax_rag.shared.audit_log import log_query
 from ax_rag.shared.logging_setup import get_logger
@@ -41,6 +42,18 @@ def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
             seen.add(name)
             sources.append({"name": name, "page": None})
     return sources
+
+
+def _answer_notice(answer_mode: str | None) -> dict | None:
+    """답변 경로에 따라 붙일 SSE notice 페이로드. 붙일 것이 없으면 None.
+
+    지식 기반 답변(answer_mode="knowledge")은 검증을 거치지 않은 LLM 자체
+    지식이므로 문서 근거가 없음을 사용자에게 알린다. 경고를 답변 텍스트에
+    섞지 않고 별도 이벤트로 보내 프론트가 다르게 표시하게 한다.
+    """
+    if answer_mode == "knowledge":
+        return dict(KNOWLEDGE_ANSWER_NOTICE)
+    return None
 
 
 async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIterator[str]:
@@ -100,6 +113,7 @@ async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIte
 
         grounded = bool(result.get("grounded"))
         sources = _build_sources(result.get("retrieved_chunks") or [], grounded)
+        answer_mode = result.get("answer_mode")
         log_query(
             user_department=user_department,
             question=request.question,
@@ -107,9 +121,13 @@ async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIte
             domain=requested_domain or "ALL",
             sources=[s["name"] for s in sources],
             grounded=grounded,
+            answer_mode=answer_mode,
         )
         async for frame in stream_answer(
-            result.get("final_answer") or "", sources, result.get("generated_files") or []
+            result.get("final_answer") or "",
+            sources,
+            result.get("generated_files") or [],
+            _answer_notice(answer_mode),
         ):
             yield frame
     except asyncio.CancelledError:
