@@ -15,7 +15,7 @@ from ax_rag.query_graph.agent_tools import ACTION_FINISH, ACTION_SEARCH
 from ax_rag.query_graph.graph import (
     after_act,
     after_agent,
-    after_verify_agent,
+    after_verify,
 )
 from ax_rag.query_graph.stages import NODE_AGENT, status_after_node, status_event_payload
 from ax_rag.shared.config import get_config
@@ -25,8 +25,7 @@ _ALLOWED_STAGES = {"route", "tool", "retrieve", "rerank", "generate", "verify"}
 
 
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **values: str) -> None:
-    """ReAct 분기를 검증하므로 배포 스위치(AGENT_MODE)와 무관하게 켜고 본다."""
-    monkeypatch.setenv("AGENT_MODE", "true")
+    """설정을 바꿔 분기를 검증한다 (감사 로그는 임시 경로로 격리)."""
     monkeypatch.setenv("AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -95,7 +94,7 @@ def test_라운드_상한을_다_쓰면_되묻지_않고_끝낸다(
 
 
 def test_검증_통과는_finalize다() -> None:
-    assert after_verify_agent({"grounded": True}) == "finalize"
+    assert after_verify({"grounded": True}) == "finalize"
 
 
 def test_반려되면_재검색을_먼저_시도한다(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -103,7 +102,7 @@ def test_반려되면_재검색을_먼저_시도한다(monkeypatch: pytest.Monke
     _env(monkeypatch, tmp_path)
     try:
         state = {"grounded": False, "retrieved_chunks": [], "search_calls": 1, "agent_steps": 1}
-        assert after_verify_agent(state) == "retry_search"
+        assert after_verify(state) == "retry_search"
     finally:
         get_config.cache_clear()
 
@@ -119,7 +118,7 @@ def test_재검색은_한_번만_한다(monkeypatch: pytest.MonkeyPatch, tmp_pat
             "verify_feedback_used": True,  # 이미 한 번 되돌렸다
         }
         # 근거 0건 + 전체 검색이므로 지식 답변 경로로 내려간다
-        assert after_verify_agent(state) == "knowledge_answer"
+        assert after_verify(state) == "knowledge_answer"
     finally:
         get_config.cache_clear()
 
@@ -130,7 +129,7 @@ def test_되먹임_스위치를_끄면_바로_기존_경로를_탄다(
     _env(monkeypatch, tmp_path, AGENT_VERIFY_FEEDBACK="false")
     try:
         state = {"grounded": False, "retrieved_chunks": [{"text": "본문"}], "retry_count": 0}
-        assert after_verify_agent(state) == "increment_retry"
+        assert after_verify(state) == "increment_retry"
     finally:
         get_config.cache_clear()
 
@@ -147,7 +146,7 @@ def test_검색_상한을_다_썼으면_재검색으로_되돌리지_않는다(
             "search_calls": 1,
             "retry_count": 0,
         }
-        assert after_verify_agent(state) == "increment_retry"
+        assert after_verify(state) == "increment_retry"
     finally:
         get_config.cache_clear()
 
@@ -161,7 +160,7 @@ def test_재시도까지_소진하면_fallback이다(monkeypatch: pytest.MonkeyP
             "search_calls": 1,
             "retry_count": 1,
         }
-        assert after_verify_agent(state) == "fallback"
+        assert after_verify(state) == "fallback"
     finally:
         get_config.cache_clear()
 
@@ -201,7 +200,7 @@ def test_모든_안내의_stage는_계약_허용값_안에_있다() -> None:
     for state in states:
         stage, _ = status_after_node(NODE_AGENT, state)
         assert stage in _ALLOWED_STAGES
-    for node in ("retry_search", "generate", "increment_retry", "fuse", "rerank"):
+    for node in ("retry_search", "generate", "increment_retry", "finalize", "direct_answer"):
         status = status_after_node(node, {})
         if status is not None:
             assert status[0] in _ALLOWED_STAGES

@@ -10,10 +10,8 @@ from typing import Any
 
 import pytest
 
-from ax_rag.query_graph.graph import after_route
 from ax_rag.query_graph.nodes import hwp_draft as draft_module
 from ax_rag.query_graph.nodes.hwp_draft import DRAFT_FAIL_ANSWER, hwp_draft
-from ax_rag.query_graph.nodes.router import _normalize_plan
 from ax_rag.shared.config import get_config
 
 
@@ -89,9 +87,3 @@ def test_LLM_실패_시_파일_없이_안내만_한다(
     result = hwp_draft({"question": "공문 초안 파일로 만들어줘", "conversation_history": []})
     assert result["final_answer"] == DRAFT_FAIL_ANSWER
     assert list(export_dir.iterdir()) == []
-
-
-def test_단독_전용_라우팅과_계획_정규화() -> None:
-    assert after_route({"intents": ["HWP_DRAFT"]}) == "HWP_DRAFT"  # 단독 종착
-    # 업무 검색과 섞이면 정규화가 제거한다 (초안 작성은 단독 완결 작업)
-    assert _normalize_plan(["HWP_DRAFT", "DOC_SEARCH"], []) == ["DOC_SEARCH"]

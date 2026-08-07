@@ -76,7 +76,7 @@ class AgentAction(BaseModel):
 
     # JSON 강제 재시도용 형식 예시 (tool_fallback._retry_example)
     RETRY_EXAMPLE: ClassVar[dict] = {
-        "thought": "<이 행동을 고른 이유 한 문장>",
+        "thought": "<이 행동을 고른 이유>",
         "action": "search_documents",
         "query": "<검색어>",
         "content": "",
@@ -94,18 +94,21 @@ class AgentAction(BaseModel):
 def _decision(
     step: int, action: str, args: dict, thought: str, *, force_finish: bool = False
 ) -> dict:
-    """agent 노드의 반환 delta를 만든다 (행동 결정 + 표시용 thought)."""
+    """agent 노드의 반환 delta를 만든다 (행동 결정 + 표시용 thought).
+
+    force_finish는 **항상** 값을 실어 보낸다. 조건부로만 True를 넣으면 이전
+    라운드의 True가 상태에 남아, 새 행동이 정상 실행됐는데도 after_act가
+    루프를 조기 종료시킨다 (LangGraph는 delta를 병합할 뿐 지우지 않는다).
+    """
     cleaned = sanitize_thought(thought) or DEFAULT_THOUGHTS.get(action, DEFAULT_THOUGHT)
-    delta: dict = {
+    return {
         "agent_steps": step,
         "agent_thought": cleaned,
         "next_action": action,
         "next_action_args": args,
+        # True면 결정적으로 확정된 단독 행동 — 실행 후 LLM에 다시 묻지 않는다
+        "force_finish": force_finish,
     }
-    if force_finish:
-        # 결정적으로 확정된 단독 행동 — 실행 후 LLM에 다시 묻지 않는다
-        delta["force_finish"] = True
-    return delta
 
 
 def _search_decision(step: int, query: str, thought: str, *, force_finish: bool = False) -> dict:
@@ -238,11 +241,16 @@ def agent(state: QueryState) -> dict:
         logger.info("에이전트: 라운드 상한 소진 → 종료")
         return {**seed, **_decision(step, ACTION_FINISH, {}, "확인한 근거로 답변을 정리한다")}
 
+    messages = _build_messages(state)
+    # 에이전트가 "무엇을 보고" 그 행동을 골랐는지 — 관측이 제대로 실렸는지,
+    # 이력이 데이터 블록으로 들어갔는지를 확인하는 유일한 수단이다
+    logger.debug("에이전트[%d] 입력 ↓\n%s", step, messages[-1].content)
     try:
-        args = call_with_schema(_build_messages(state), AgentAction, llm_getter=get_llm)
+        args = call_with_schema(messages, AgentAction, llm_getter=get_llm)
     except Exception:
         logger.exception("에이전트 판단 호출 실패")
         args = None
+    logger.debug("에이전트[%d] 원시 판단: %r", step, args)
 
     if args is None:
         if step == 1:
@@ -257,6 +265,10 @@ def agent(state: QueryState) -> dict:
 
     thought = str(args.get("thought") or "")
     action = resolve_action(str(args.get("action") or ""))
+    if not thought.strip():
+        # 모델이 판단 근거를 안 채우면 사용자에게는 기본 문구만 나간다
+        # (추론 스트리밍이 사실상 꺼진 상태). 자주 뜨면 스키마·프롬프트 문제다
+        logger.warning("에이전트[%d]가 thought를 비워 보냈다 → 기본 문구로 대체", step)
     if not action:
         logger.warning("에이전트가 미지의 행동을 냈다: %r → 종료로 처리", args.get("action"))
         return {**seed, **_decision(step, ACTION_FINISH, {}, thought)}

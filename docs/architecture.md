@@ -71,24 +71,23 @@ mars-ai-server/
 │   │   └── graph.py            # chunk -> embed_and_upsert -> END
 │   └── query_graph/
 │       ├── state.py            # QueryState
-│       ├── prompts.py          # 에이전트/라우터/생성/검증/잡담 시스템 프롬프트
-│       ├── tools.py            # 도구 레지스트리 (노드·설명·매처·상태문구·단독전용)
+│       ├── prompts.py          # 에이전트/생성/검증/잡담 시스템 프롬프트
+│       ├── tools.py            # 도구 레지스트리 (노드·설명·매처·상태문구·지연실행)
 │       ├── agent_tools.py      # ReAct 행동 레지스트리 (이름·phase·관측 포매팅)
 │       ├── retrieval.py        # 검색 파이프라인 함수화 + 근거 병합(예산 절단)
 │       ├── thought.py          # 판단 근거 위생 처리 (검증 밖 노출 텍스트)
-│       ├── query_hygiene.py    # 검색어 위생 (파일 요청 표현 제거) — 라우터·에이전트 공용
+│       ├── query_hygiene.py    # 검색어 위생 (파일 요청 표현 제거)
 │       ├── tool_fallback.py    # 구조화 호출 3단 안전망 (예시 기반 재시도)
 │       ├── acl.py              # ACL 필터 (표현식 + BM25 후처리)
 │       ├── fusion.py           # RRF 융합
 │       ├── budget.py           # 컨텍스트 토큰 예산 계산 + 대화 이력 절삭
-│       ├── graph.py            # StateGraph 조립 (plan-then-execute 배선·합성)
+│       ├── graph.py            # StateGraph 조립 (ReAct 루프 배선·합성)
 │       └── nodes/
 │           ├── agent.py        # AgentAction: 다음 행동 1개 + 판단 근거 (ReAct 판단부)
 │           ├── act.py          # 행동 실행·관측 누적 / 반려 되먹임 / 지연 도구 (ReAct 실행부)
-│           ├── router.py       # ClassifyAndRewrite: 재작성 + 계획(intents) 수립
-│           ├── smalltalk.py    # 잡담 응답 (단독 전용 도구)
+│           ├── smalltalk.py    # 잡담 응답 (direct_answer 경로)
 │           ├── discharge_days.py  # 전역일 D-day 계산 (결정적 코드 도구, 예시)
-│           ├── dense_retrieve.py
+│           ├── dense_retrieve.py  # ↓ 네 노드는 retrieval.run_search가 함수로 호출
 │           ├── bm25_retrieve.py
 │           ├── fuse.py
 │           ├── rerank.py       # top_n=5 확정 + 부모 치환
@@ -105,12 +104,11 @@ mars-ai-server/
     └── integration_tests/
 ```
 
-## 4. query_graph 흐름
+## 4. query_graph 흐름 — ReAct 에이전트 루프
 
-배선은 두 가지이며 `config.AGENT_MODE`로 고른다. 기본값은 **ReAct 루프**(true)다.
-승격 판단(L40 A/B 측정, `docs/react_migration_plan.md` §8)이 끝나면 한쪽을 삭제한다.
-
-### 4-A. ReAct 루프 (AGENT_MODE=true, 기본)
+에이전트가 다음 행동 하나를 정하고(agent) 실행한 뒤(act) 관측을 보고 다시
+판단하는 구조다. 이전 배선(route + 실행 큐, plan-then-execute)은 제거했으며
+전환 설계와 근거는 `docs/react_migration_plan.md`에 있다.
 
 ```
 START → agent ⇄ act              (상한: MAX_AGENT_STEPS=3 / MAX_SEARCH_CALLS=2)
@@ -145,75 +143,44 @@ START → agent ⇄ act              (상한: MAX_AGENT_STEPS=3 / MAX_SEARCH_CAL
 5. **direct_answer** — 도구도 검색도 쓰지 않은 질문(인사·잡담·자기소개).
    smalltalk 노드가 그대로 이 자리를 맡는다 (grounded=False, sources 비움)
 
-generate / verify / finalize / increment_retry / fallback / knowledge_answer는
-아래 4-B와 **완전히 같은 노드**다. 검증·합성·fail-closed 규칙은 바뀌지 않았다.
+### 4-1. 검색·생성·검증 (에이전트가 부르는 것들)
 
-### 4-B. plan-then-execute (AGENT_MODE=false, 10노드 + 도구 노드 + 조건부 분기)
+- **검색** — `retrieval.run_search()`가 dense → bm25 → fuse → rerank를 한 번에
+  수행한다. 그래프 노드가 아니라 함수이며, act 노드가 호출한다
+  - dense: 임베딩 → Milvus 검색. ACL(visibility/부서)은 Milvus 스칼라 필터.
+    top_k=SEARCH_TOP_K(.env, 기본 20). 도메인 한정은 **요청이 명시한 경우
+    (requested_domain)에만** 적용하며, LLM은 검색 범위를 정하지 못한다
+  - bm25: Kiwi 토큰화 → bm25s 검색(3배 오버샘플) → **ACL 후처리 필터 필수**.
+    인덱스 없으면 빈 리스트 (dense 단독 폴백)
+  - fuse: RRF 융합(k=60) → 상위 RERANK_TOP_K(기본 20)
+  - rerank: 리랭커 서버 → top_n=5 확정 → 그 5개만 부모 청크로 치환
+  - 여러 번 검색하면 `merge_chunks`가 합집합을 리랭크 점수로 재정렬해
+    **RERANK_TOP_N개로 절단**한다 (§7 예산 불변식)
+- **generate** — 근거 기반 답변 생성. 프롬프트에 원본 질문과 검색 쿼리를
+  **둘 다** 넣어 검색-생성 미스매치를 모델이 감지할 여지를 남긴다
+- **verify** — LLM 근거 검증 (VerifyAnswer):
+  - 전제 검사(코드): 답변이 비었거나 근거 0건이면 LLM 호출 없이 grounded=False
+  - 판정 실패·예외 시에도 grounded=False (fail-closed)
+  - **판정 범위는 "답변에 적힌 내용"뿐이다.** 질문의 일부를 못 답했거나
+    "문서에서 확인되지 않는다"고 밝힌 것은 반려 사유가 아니다 (실측 오탐 사례는
+    prompts.VERIFY_SYSTEM_PROMPT 주석 참조)
+  - 반려 시 지목된 문장만 덜어내고 **재검증**하는 부분 수용을 한 번 시도한다.
+    정제본도 반드시 검증을 통과해야 확정된다
+- **finalize / increment_retry / fallback** — 성공 시 도구 답변과 문서 답변을
+  실행 순서로 합성해 확정 (코드 조립만 — verify 뒤 LLM 가공 금지),
+  실패 시 MAX_VERIFY_RETRY(=1)까지 generate만 재실행, 소진 시 문서 파트만
+  안전한 대체 답변으로 바꿔 합성
+- **knowledge_answer** — 검색이 **근거를 하나도 못 찾았고** 도메인을 한정하지
+  않았을 때, 정형 사과 문구 대신 LLM 자체 지식으로 답한다
+  (`KNOWLEDGE_FALLBACK_ENABLED`로 끌 수 있음). **재검색을 다 쓴 뒤에** 분기한다 —
+  문서로 답할 기회를 남겨 둔 채 검증 없는 경로로 내려가지 않는다.
+  ⚠️ **이 경로는 verify를 거치지 않는다.** SSE `notice` 이벤트
+  (`code=ungrounded_knowledge`)로 문서 근거가 없음을 알리고, 감사 로그에
+  `answer_mode="knowledge"`로 남겨 사후 추적이 가능하게 한다.
+  근거가 **있는데** 검증에서 떨어진 경우는 이 경로로 보내지 않는다 —
+  모델이 수치를 지어냈다는 신호이므로 검증 없이 확정하면 안 된다 (fail-closed)
 
-```
-route ─(계획이 SMALLTALK뿐)→ smalltalk ─────────────────────────────→ END
-  └──→ [도구₁ → 도구₂ ...] → dense_retrieve → bm25_retrieve → fuse → rerank
-       (tool_answers 누적,      └(계획에 DOC_SEARCH 없으면 도구 후 바로 finalize)
-        계획 순서대로)       → generate → verify
-                                    ↑          │
-                          (실패, 재시도 여유)  │
-                             increment_retry ←─┤
-                                                ├→ (근거 0건 + 전체검색)
-                                                │   knowledge_answer → END
-                                                │   (LLM 자체 지식, 검증 미거침)
-                    (성공) finalize / (소진) fallback — 도구 답변 + 문서 답변을
-                                                        계획 순서로 코드 합성
-```
-
-노드별 책임:
-
-1. **route** — 질문 + 대화 이력 → `rewritten_query` + 처리 계획 `intents`를
-   한 번의 구조화 호출(ClassifyAndRewrite)로. 멀티턴 맥락 해소 + 구어체
-   정규화 + 경로 분류. 대부분 계획은 1개지만 복합 질문("전역까지 며칠 남았고
-   절차는?")이면 여러 경로를 질문 순서대로 담는다 (최대 3개). 실패 시 원본
-   질문 + DOC_SEARCH 폴백. 결정적 매처가 잡은 도구는 계획에 보장 포함되고,
-   짧은 질문(30자 이하)은 매처 단독으로 LLM 없이 종결한다.
-   SMALLTALK은 단독 전용(검색·검증 없이 직접 응답, sources 비움,
-   grounded=False) — 업무 경로와 섞이면 계획에서 제거된다.
-   요청의 tool 필드가 경로를 강제하면 계획을 그 경로 하나로 고정하고
-   재작성만 수행한다. 합성은 verify 뒤 코드 조립만 허용 (fail-closed)
-2. **dense_retrieve** — rewritten_query 임베딩 → Milvus Lite 검색.
-   ACL(visibility/부서)은 Milvus 스칼라 필터로 적용. top_k=SEARCH_TOP_K(.env, 기본 20).
-   도메인 한정은 **요청이 명시한 경우(requested_domain)에만** 적용하며,
-   라우터의 LLM 분류는 검색 범위를 제한하지 않는다
-3. **bm25_retrieve** — Kiwi 토큰화 → bm25s 검색(3배 오버샘플) →
-   **ACL 후처리 필터 필수** → top_k=SEARCH_TOP_K.
-   도메인 한정 정책은 dense와 동일. 인덱스 없으면 빈 리스트 반환 (dense 단독 폴백)
-4. **fuse** — RRF 융합 (k=60 시작, 평가로 조정) → 상위 RERANK_TOP_K(기본 20)
-5. **rerank** — 리랭커 서버 호출 → top_n=5 확정 → 그 5개만 부모 청크로 치환
-6. **generate** — 근거 기반 답변 생성. 프롬프트에는 원본 질문과 rewritten_query를
-   **둘 다** 포함시켜 검색-생성 미스매치를 모델이 감지할 여지를 남긴다
-7. **verify** — LLM 근거 검증 (VerifyAnswer tool-call):
-   - 전제 검사(코드): 답변이 비었거나 근거 0건이면 LLM 호출 없이 grounded=False
-   - 판정: tool_call 실패·예외 시에도 grounded=False (fail-closed)
-   - 수치/문서명을 근거 문자열과 대조하던 규칙 검증은 제거했다. 부분 문자열
-     대조라 정밀도가 낮아 오탐·오통과가 반복됐고, LLM 검증이 그 몫을 온전히
-     대신하는 것을 실측으로 확인했다 (지어낸 일수·이월 한도·기한·조항 번호를
-     전부 탈락시키고, 규칙이 못 하던 근거와의 **모순**까지 판별)
-8. **finalize / increment_retry / fallback** — 성공 시 도구 답변(tool_answers)과
-   문서 답변을 계획 순서로 합성해 확정 (코드 조립만 — verify 뒤 LLM 가공 금지),
-   실패 시 MAX_VERIFY_RETRY(=1)까지 generate만 재실행 (도구는 재실행 안 함),
-   소진 시 문서 파트만 안전한 대체 답변으로 바꿔 합성.
-   finalize 뒤에는 남은 **후처리 도구**(POST_SEARCH_TOOLS — HWP_EXPORT 등,
-   방금 확정된 답변을 입력으로 쓰는 도구)가 순차 실행된다. fallback 경로는
-   후처리를 건너뛴다 (검증 실패 답변을 파일 등으로 만들지 않음)
-9. **knowledge_answer** — 검색이 **근거를 하나도 못 찾았고** 도메인을 한정하지
-   않았을 때, 정형 사과 문구 대신 LLM 자체 지식으로 답한다
-   (`KNOWLEDGE_FALLBACK_ENABLED`로 끌 수 있음). 재시도보다 **앞에** 분기한다 —
-   근거가 0건이면 재생성해도 빈 초안이 반복될 뿐이라 무의미하다.
-   ⚠️ **이 경로는 verify를 거치지 않는다.** 대신 SSE `notice` 이벤트
-   (`code=ungrounded_knowledge`)로 문서 근거가 없음을 알리고, 감사 로그에
-   `answer_mode="knowledge"`로 남겨 사후 추적이 가능하게 한다.
-   근거가 **있는데** 검증에서 떨어진 경우는 이 경로로 보내지 않는다 —
-   모델이 수치를 지어냈다는 신호이므로 검증 없이 확정하면 안 된다 (fail-closed)
-
-dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
-구현 단순성을 위해 순차부터 시작한다.
+dense와 bm25는 독립적이라 병렬 가능하지만, 구현 단순성을 위해 순차부터 시작한다.
 
 ## 5. indexer_graph 흐름 (2노드)
 

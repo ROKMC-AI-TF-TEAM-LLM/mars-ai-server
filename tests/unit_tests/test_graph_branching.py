@@ -9,7 +9,6 @@ import pytest
 
 from ax_rag.query_graph import graph as graph_module
 from ax_rag.query_graph.graph import (
-    after_route,
     after_verify,
     fallback,
     finalize,
@@ -23,18 +22,9 @@ from ax_rag.shared.config import get_config
 # (근거가 있는데 검증이 떨어졌다는 건 모델이 수치를 지어냈다는 신호다)
 _WITH_CHUNKS: list[dict] = [{"text": "연차는 15일이다", "source_doc": "휴가규정.md"}]
 
-
-def test_등록된_도구_intent면_해당_노드로_직행한다() -> None:
-    assert after_route({"intent": "SMALLTALK"}) == "SMALLTALK"
-
-
-def test_DOC_SEARCH나_미설정이면_검색_경로로_간다() -> None:
-    for intent in ("DOC_SEARCH", None, ""):
-        assert after_route({"intent": intent}) == "dense_retrieve"
-
-
-def test_레지스트리에_없는_intent는_검색_경로로_간다() -> None:
-    assert after_route({"intent": "UNKNOWN_TOOL"}) == "dense_retrieve"
+# 재검색 예산을 이미 쓴 상태. ReAct는 반려 시 재검색을 먼저 시도하므로,
+# 그 뒤 분기(재시도/지식답변/fallback)를 보려면 예산 소진을 명시해야 한다
+_NO_RESEARCH_BUDGET: dict = {"verify_feedback_used": True}
 
 
 def test_검증_통과면_finalize() -> None:
@@ -45,14 +35,28 @@ def test_실패_후_재시도_여유가_있으면_increment_retry() -> None:
     # MAX_VERIFY_RETRY=1: 첫 실패(retry_count=0)는 재시도.
     # 근거가 있어야 재생성에 의미가 있다 (근거 0건이면 지식 답변 경로로 간다)
     assert (
-        after_verify({"grounded": False, "retry_count": 0, "retrieved_chunks": _WITH_CHUNKS})
+        after_verify(
+            {
+                **_NO_RESEARCH_BUDGET,
+                "grounded": False,
+                "retry_count": 0,
+                "retrieved_chunks": _WITH_CHUNKS,
+            }
+        )
         == "increment_retry"
     )
 
 
 def test_재시도_소진이면_fallback() -> None:
     assert (
-        after_verify({"grounded": False, "retry_count": 1, "retrieved_chunks": _WITH_CHUNKS})
+        after_verify(
+            {
+                **_NO_RESEARCH_BUDGET,
+                "grounded": False,
+                "retry_count": 1,
+                "retrieved_chunks": _WITH_CHUNKS,
+            }
+        )
         == "fallback"
     )
 
@@ -60,7 +64,6 @@ def test_재시도_소진이면_fallback() -> None:
 def test_finalize는_초안을_확정한다() -> None:
     result = finalize({"draft_answer": "확정 답변"})
     assert result["final_answer"] == "확정 답변"
-    assert result["pending_intents"] == []  # DOC_SEARCH는 큐에서 소비됨
 
 
 def test_increment_retry는_횟수를_올리고_반려_사유를_싣는다() -> None:
@@ -89,9 +92,14 @@ def test_finalize와_fallback은_답변_경로를_표시한다() -> None:
 
 def test_근거_0건이고_도메인_미지정이면_지식_답변으로_간다() -> None:
     """검색이 아무것도 못 찾았으면 재생성해도 결과가 같다 (빈 초안 반복) —
-    재시도를 건너뛰고 지식 답변으로 보낸다."""
+    재시도를 건너뛰고 지식 답변으로 보낸다.
+
+    단 **재검색이 먼저다**: 문서로 답할 기회를 다 쓰기 전에 검증 없는 경로로
+    내려가지 않는다 (test_agent_graph.test_반려되면_재검색을_먼저_시도한다)."""
     assert (
-        after_verify({"grounded": False, "retry_count": 0, "retrieved_chunks": []})
+        after_verify(
+            {**_NO_RESEARCH_BUDGET, "grounded": False, "retry_count": 0, "retrieved_chunks": []}
+        )
         == "knowledge_answer"
     )
 
@@ -102,7 +110,12 @@ def test_근거가_있는데_검증에_실패하면_지식_답변으로_가지_�
     for retry_count in (0, 1):
         assert (
             after_verify(
-                {"grounded": False, "retry_count": retry_count, "retrieved_chunks": _WITH_CHUNKS}
+                {
+                    **_NO_RESEARCH_BUDGET,
+                    "grounded": False,
+                    "retry_count": retry_count,
+                    "retrieved_chunks": _WITH_CHUNKS,
+                }
             )
             != "knowledge_answer"
         )
@@ -112,6 +125,7 @@ def test_도메인을_한정했으면_지식_답변으로_가지_않는다() -> 
     """범위 한정 검색의 실패는 '문서에 없음'이 아니라 '이 범위에 없음'이다 —
     범위를 넓히라고 안내하는 쪽이 옳다."""
     state = {
+        **_NO_RESEARCH_BUDGET,
         "grounded": False,
         "retry_count": 1,
         "retrieved_chunks": [],
@@ -133,7 +147,9 @@ def test_설정_스위치를_끄면_지식_답변을_쓰지_않는다(
     get_config.cache_clear()
     try:
         assert (
-            after_verify({"grounded": False, "retry_count": 1, "retrieved_chunks": []})
+            after_verify(
+                {**_NO_RESEARCH_BUDGET, "grounded": False, "retry_count": 1, "retrieved_chunks": []}
+            )
             == "fallback"
         )
     finally:

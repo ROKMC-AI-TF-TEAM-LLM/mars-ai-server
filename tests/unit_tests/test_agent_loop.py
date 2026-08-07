@@ -102,7 +102,7 @@ def test_긴_질문은_매처가_걸려도_LLM_판단을_태운다(monkeypatch: 
     _install(monkeypatch, fake)
     result = agent({"question": "전역까지 며칠 남았는지 알려주고 전역 신청 절차도 자세히 알려줘"})
     assert result["next_action"] == "discharge_days"  # 매처 도구 보장
-    assert "force_finish" not in result  # 검색 기회를 남긴다
+    assert result["force_finish"] is False  # 검색 기회를 남긴다
 
 
 def test_검색_힌트가_있으면_짧아도_매처_단독으로_끝내지_않는다(
@@ -238,7 +238,7 @@ def test_대화_이력은_대화가_아니라_데이터_블록으로_들어간�
     assert fake.captured_messages is not None
     assert len(fake.captured_messages) == 2  # 시스템 + 사용자 블록 하나뿐
     user_text = fake.captured_messages[-1].content
-    assert "이어서 답하지 말 것" in user_text
+    assert "이어서 답하지 않는다" in user_text
     assert "육아휴직 알려줘" in user_text
 
 

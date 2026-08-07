@@ -100,10 +100,6 @@ class Config:
     KNOWLEDGE_FALLBACK_ENABLED: bool
 
     # --- ReAct 에이전트 루프 (docs/react_migration_plan.md) ---
-    # 켜면 route + 실행 큐 대신 agent ⇄ act 루프가 돈다. 끄면 기존
-    # plan-then-execute 그래프가 그대로 동작한다 (L40 A/B 측정용 스위치).
-    # 승격 판단이 끝나면 한쪽을 삭제한다
-    AGENT_MODE: bool
     # 도구 호출 라운드 상한. 무한 루프는 곧 토큰 예산 파괴다 (code_guide §12 패턴 C)
     MAX_AGENT_STEPS: int
     # 검색 호출 상한. 라운드 상한과 별개로 두는 이유는 검색이 가장 비싼
@@ -217,7 +213,6 @@ def get_config() -> Config:
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
         KNOWLEDGE_FALLBACK_ENABLED=_env_bool("KNOWLEDGE_FALLBACK_ENABLED", True),
-        AGENT_MODE=_env_bool("AGENT_MODE", True),
         MAX_AGENT_STEPS=_env_int("MAX_AGENT_STEPS", 3),
         MAX_SEARCH_CALLS=_env_int("MAX_SEARCH_CALLS", 2),
         AGENT_VERIFY_FEEDBACK=_env_bool("AGENT_VERIFY_FEEDBACK", True),

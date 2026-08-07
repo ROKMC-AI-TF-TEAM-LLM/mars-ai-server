@@ -25,11 +25,9 @@ class QueryState(TypedDict):
     # 처리 경로 대표값(계획의 첫 항목, 로그·하위 호환용). 요청의 tool 필드가
     # 선설정하면 강제(라우터 분류 무시), 없으면 route가 분류해 채운다
     intent: str | None
-    # 처리 계획: route가 확정한 경로 목록. 대부분 1개, 복합 질문이면 여러 개.
-    # 순서 = 최종 답변 합성 순서 (graph._compose_final)
+    # 실행된 경로 기록: act 노드가 실행 순서대로 덧붙인다 (검색하면 DOC_SEARCH,
+    # 도구를 쓰면 그 intent). 순서 = 최종 답변 합성 순서 (graph._compose_final)
     intents: list[str] | None
-    # 남은 실행 큐 (도구 먼저, DOC_SEARCH는 마지막). 도구 노드가 자신을 지우며 소비
-    pending_intents: list[str] | None
     # 도구 실행 결과 누적: [{"intent": str, "answer": str}]. finalize/fallback이 합성
     tool_answers: list[dict] | None
     # 도구가 생성한 파일 목록: [{"name": str, "url": str, "tool": str}]
@@ -59,7 +57,7 @@ class QueryState(TypedDict):
     # 감사 로그와 SSE notice 이벤트가 이 값을 쓴다
     answer_mode: str | None
 
-    # ── ReAct 에이전트 루프 (AGENT_MODE=true일 때만 채워진다) ──────────────
+    # ── ReAct 에이전트 루프 ────────────────────────────────────────────────
     # 지금까지 한 행동과 그 관측(요약본): [{"action","thought","observation"}].
     # ★ 근거 전문은 여기 넣지 않는다 — retrieved_chunks에 쌓고 여기에는 발췌만
     # 남긴다. 스크래치패드가 부풀면 16K 예산이 깨진다
@@ -79,5 +77,8 @@ class QueryState(TypedDict):
     deferred_actions: list[str] | None
     # verify 반려 사유를 에이전트에게 되돌린 적이 있는지 (재검색 1회 제한)
     verify_feedback_used: bool | None
+    # 에이전트가 이미 검색한 검색어를 또 내놓아 중복 차단에 걸렸다는 표시.
+    # 새 검색어를 못 내놓는 상태라는 뜻이므로 반려 되먹임도 걸지 않는다
+    search_ideas_exhausted: bool | None
     # 감사 로그용 도구 호출 기록: [{"step","action","thought","query"}]
     tool_calls_log: list[dict] | None

@@ -54,15 +54,26 @@ class IndexState(TypedDict):
 class QueryState(TypedDict):
     question: str                                # 원본 질문 (generate 프롬프트용)
     conversation_history: Optional[list[dict]]   # [{"role": "user"|"assistant", "content": str}, ...]
-    rewritten_query: Optional[str]               # route가 생성한 검색용 쿼리
+    rewritten_query: Optional[str]               # 첫 검색어 (리랭크 기준·로그·평가가 참조)
     user_department: str
     requested_domain: Optional[str]              # 요청이 명시한 검색 도메인 한정 (빈 값=전체)
-    intent: Optional[str]                        # 처리 경로 대표값(계획 첫 항목). tool 필드로 강제 가능
-    intents: Optional[list[str]]                 # 처리 계획 (복수 가능). 순서 = 최종 답변 합성 순서
-    pending_intents: Optional[list[str]]         # 남은 실행 큐 (도구 먼저, DOC_SEARCH는 마지막)
+    intent: Optional[str]                        # 요청 tool 필드의 강제 경로 (없으면 에이전트가 판단)
+    intents: Optional[list[str]]                 # 실행된 경로 기록. 순서 = 최종 답변 합성 순서
     tool_answers: Optional[list[dict]]           # 도구 실행 결과 누적 [{"intent": str, "answer": str}]
     generated_files: Optional[list[dict]]        # 도구 생성 파일 [{"name", "url", "tool"}] → SSE file 이벤트
-    domain: Optional[str]                        # (예약) 과거 라우터 분류 자리 — 현재 미사용
+    domain: Optional[str]                        # (예약) 미사용
+    # ── ReAct 루프 ──
+    agent_scratchpad: Optional[list[dict]]       # 행동·관측 기록 (요약본) — 다음 판단의 재료
+    agent_thought: Optional[str]                 # 직전 판단 근거 (SSE status의 thought 필드)
+    agent_steps: int                             # 소비한 판단 라운드 (MAX_AGENT_STEPS 상한)
+    search_calls: int                            # 소비한 검색 횟수 (MAX_SEARCH_CALLS 상한)
+    searched_queries: Optional[list[str]]        # 중복 검색 차단용
+    next_action: Optional[str]                   # agent가 정한 다음 행동 (act가 실행)
+    next_action_args: Optional[dict]             # 그 행동의 인자 (검색어·초안 본문)
+    force_finish: Optional[bool]                 # 결정적 확정 — 실행 후 LLM에 되묻지 않음
+    deferred_actions: Optional[list[str]]        # 검증 통과 후 실행할 도구 (파일 저장 등)
+    verify_feedback_used: Optional[bool]         # 반려 되먹임 재검색을 이미 썼는지 (1회 제한)
+    tool_calls_log: Optional[list[dict]]         # 감사 로그용 행동 기록
     dense_candidates: Optional[list[dict]]       # dense 검색 top_k개
     bm25_candidates: Optional[list[dict]]        # bm25 검색 top_k개
     retrieved_candidates: Optional[list[dict]]   # RRF 융합 후 상위 20
@@ -150,10 +161,15 @@ def get_llm() -> "ChatOpenAI": ...   # @lru_cache(maxsize=1)
 # shared/audit_log.py
 def log_query(user_department: str, question: str, domain: str,
               sources: list[str], grounded: bool,
-              answer_mode: str | None = None) -> None:
+              answer_mode: str | None = None,
+              tool_calls: list[dict] | None = None,
+              agent_steps: int = 0) -> None:
     """JSONL append. 경로는 config.AUDIT_LOG_PATH.
     answer_mode는 답변 경로 — grounded만으로는 "검증 실패"와
-    "근거 없이 LLM 지식으로 답함"이 구분되지 않는다."""
+    "근거 없이 LLM 지식으로 답함"이 구분되지 않는다.
+    tool_calls/agent_steps는 ReAct 루프의 행동 기록
+    ([{"step","action","thought","query"}]) — 재검색이 실제로 회복을
+    만들어내는지 사후 확인하는 유일한 자료다."""
 
 # main.py (미들웨어 경계)
 def to_internal_history(messages: list[dict]) -> list[dict]:
@@ -458,20 +474,17 @@ data: {"type":"done"}
 ## 6. Tool 스키마 (vLLM `--tool-call-parser hermes`로 파싱)
 
 ```python
-class ClassifyAndRewrite(BaseModel):
-    """멀티턴 맥락 해소 + 구어체 정규화 + 처리 계획(경로 목록) 분류"""
-    rewritten_query: str   # 검색에 최적화된 쿼리
-    intents: list[str]     # 처리 경로 목록: "DOC_SEARCH" | 도구 레지스트리 키.
-    # 보통 1개, 서로 다른 처리가 필요한 복합 질문이면 질문 순서대로 여러 개
-    # (plan-then-execute — 도구들을 먼저 실행해 tool_answers에 누적하고,
-    #  DOC_SEARCH가 있으면 검색 파이프라인 후 finalize가 계획 순서로 합성).
-    # 정규화: 미지 값 제거, 중복 제거, 최대 3개. SMALLTALK 등 단독 전용 도구
-    # (tools.TERMINAL_ONLY_TOOLS)는 다른 경로와 섞이면 제거 — verify 밖 자유
-    # 생성을 업무 답변과 합성하지 않는다. 결정적 매처(TOOL_MATCHERS)가 잡은
-    # 도구는 계획에 보장 포함되며, 짧은 질문(30자 이하)은 매처 단독으로 LLM 없이
-    # 종결한다. 분류 실패/전량 미지 값은 [DOC_SEARCH] 폴백. 요청의 tool 필드가
-    # 경로를 강제하면 계획은 그 경로 하나로 고정하고 재작성만 수행한다
-    # (강제 모드, 잡담 예외 없음)
+class AgentAction(BaseModel):
+    """다음 행동 하나 + 그 판단 근거 (ReAct 루프의 판단부)"""
+    thought: str    # 왜 이 행동을 하는가 (한 문장). **SSE status의 thought로 사용자에게 표시된다**
+    action: str     # "search_documents" | 도구 행동 이름 | "finish"
+    query: str      # search_documents 전용 검색어 (파일 요청 표현은 코드가 제거)
+    content: str    # draft_document 전용 본문
+    # 행동 이름이 흔들려도(intent 이름·대소문자) agent_tools.resolve_action이 보정한다.
+    # 구조화 호출이 실패하면 1라운드에 한해 원본 질문으로 검색을 강제 —
+    # 에이전트가 완전히 실패해도 단일 검색 경로와 같게 동작한다.
+    # ⚠️ thought는 verify를 거치지 않는다: query_graph/thought.py가 길이·개행·
+    # 꺾쇠를 코드로 다듬고, config.STREAM_THOUGHTS로 전송을 끌 수 있다
 
 class VerifyAnswer(BaseModel):
     """답변이 문서에 근거하는지 검증"""

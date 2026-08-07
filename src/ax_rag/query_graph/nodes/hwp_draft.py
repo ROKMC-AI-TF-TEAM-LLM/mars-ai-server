@@ -5,7 +5,7 @@
   프롬프트로 강제한다 (SMALLTALK과 같은 원칙: 근거 없는 창작 금지)
 - HWP_EXPORT(기존 답변 그대로 저장, LLM 0회)와 역할이 다르다:
   이 도구는 "공문 초본 잡아서 파일로 만들어줘"처럼 새 문서를 만든다
-- 단독 전용(TERMINAL_ONLY). 산출물은 EXPORT_DIR + GET /files/{파일명}
+- 루프 안에서 즉시 실행되는 도구다 (inline). 산출물은 EXPORT_DIR + GET /files/{파일명}
 """
 
 from __future__ import annotations

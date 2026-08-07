@@ -258,23 +258,28 @@ def test_문서_목록_빈_저장소(monkeypatch) -> None:
 
 
 def test_노드_완료에_따른_status_안내() -> None:
-    assert main._status_after_node("route", {"intent": "DOC_SEARCH"}) == (
+    """에이전트는 **정한 행동을 실행하기 전에** 알린다 (agent 노드 완료 시점)."""
+    assert main._status_after_node("agent", {"next_action": "search_documents"}) == (
         "retrieve",
         "군 내부 문서를 검색하는 중...",
     )
-    assert main._status_after_node("route", {"intent": "SMALLTALK"}) == (
+    assert main._status_after_node("agent", {"next_action": "finish"}) == (
         "generate",
         "답변을 생성하는 중...",
     )
-    assert main._status_after_node("fuse", {})[0] == "rerank"
-    assert main._status_after_node("rerank", {})[0] == "generate"
+    assert main._status_after_node("agent", {"next_action": "discharge_days"})[0] == "tool"
     assert main._status_after_node("generate", {})[0] == "verify"
     assert main._status_after_node("increment_retry", {})[1] == "답변을 다시 생성하는 중..."
+    assert main._status_after_node("retry_search", {})[0] == "route"
 
 
 def test_안내가_없는_노드는_status를_만들지_않는다() -> None:
-    for node in ("dense_retrieve", "bm25_retrieve", "verify", "finalize", "fallback", "smalltalk"):
+    """act는 다음 agent 라운드가 안내하고, 종착 노드는 안내할 다음 단계가 없다."""
+    for node in ("act", "verify", "fallback", "knowledge_answer", "deferred"):
         assert main._status_after_node(node, {}) is None
+    # 지연 도구 예약이 없으면 finalize·direct_answer도 안내하지 않는다
+    assert main._status_after_node("finalize", {}) is None
+    assert main._status_after_node("direct_answer", {}) is None
 
 
 # ---------- _build_sources ----------

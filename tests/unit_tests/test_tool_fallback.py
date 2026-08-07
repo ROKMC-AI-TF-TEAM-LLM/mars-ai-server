@@ -138,9 +138,9 @@ def test_마지막_폴백은_예시_JSON을_보여준다() -> None:
 
 
 def test_스키마의_RETRY_EXAMPLE이_합성_예시보다_우선한다() -> None:
-    from ax_rag.query_graph.nodes.router import ClassifyAndRewrite
+    from ax_rag.query_graph.nodes.agent import AgentAction
     from ax_rag.query_graph.nodes.verify import VerifyAnswer
 
-    assert "<검색용으로 재작성한 질문>" in _retry_example(ClassifyAndRewrite)
+    assert "<이 행동을 고른 이유" in _retry_example(AgentAction)
     # verify 예시는 앵무새 복사돼도 안전한 방향(grounded=false)이어야 한다
     assert '"grounded": false' in _retry_example(VerifyAnswer)

@@ -46,6 +46,9 @@ def _normalize_query(query: str) -> str:
 
 def _record(state: QueryState, action: str, observation: str, thought: str = "") -> list[dict]:
     """스크래치패드에 관측 한 건을 덧붙인 새 목록을 만든다."""
+    # 다음 라운드의 판단 재료가 이것이다 — 관측이 부실하면 에이전트가 같은
+    # 실수를 반복하므로, 무엇을 돌려줬는지 볼 수 있어야 한다
+    logger.debug("관측[%s] ↓\n%s", action, observation)
     return [
         *(state.get("agent_scratchpad") or []),
         {"action": action, "thought": thought, "observation": observation},
@@ -84,11 +87,15 @@ def _act_search(state: QueryState, args: dict) -> dict:
     normalized = _normalize_query(query)
 
     if normalized in {_normalize_query(item) for item in searched}:
-        # 같은 검색을 반복하면 결과도 같다 — LLM에 되묻지 않고 루프를 끝낸다
+        # 같은 검색을 반복하면 결과도 같다 — LLM에 되묻지 않고 루프를 끝낸다.
+        # search_ideas_exhausted를 함께 세운다: 에이전트가 새 검색어를 못 내놓는
+        # 상태라는 뜻이므로, 검증 반려 후 되먹임(retry_search)으로 루프를 다시
+        # 열어도 같은 검색어가 또 나올 뿐이다 (실측: 3라운드 내내 동일 검색어)
         logger.info("중복 검색어 감지(%s) → 재검색 생략하고 종료", query)
         return {
             "agent_scratchpad": _record(state, ACTION_SEARCH, format_duplicate_observation(query)),
             "force_finish": True,
+            "search_ideas_exhausted": True,
         }
 
     chunks = run_search(state, query)

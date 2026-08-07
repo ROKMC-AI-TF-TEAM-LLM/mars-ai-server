@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ax_rag.query_graph.state import QueryState
-from ax_rag.query_graph.tools import TOOL_NODES
+from ax_rag.query_graph.tools import POST_SEARCH_TOOLS, TOOL_NODES
 
 # 검색과 종료는 도구가 아니라 루프의 기본 행동이다 (TOOL_NODES에 없다)
 ACTION_SEARCH = "search_documents"
@@ -50,7 +50,6 @@ class AgentTool:
 
     name: str  # LLM이 action 값으로 쓰는 이름
     intent: str  # tools.py 레지스트리 키 (합성 순서·진행 문구가 이 값을 쓴다)
-    phase: str  # PHASE_INLINE | PHASE_DEFERRED
     node: Callable[[dict], dict]  # 실행 함수 (tools.TOOL_NODES 재사용)
     # 에이전트 프롬프트용 설명. tools.TOOL_DESCRIPTIONS를 그대로 쓰지 않는다 —
     # 그쪽은 라우터용이라 본문에 "DOC_SEARCH", "HWP_EXPORT" 같은 **intent 이름**이
@@ -58,6 +57,12 @@ class AgentTool:
     # (action="DOC_SEARCH" → 미지의 행동 → 검색이 통째로 사라진다).
     # 분류 기준 자체는 같게 유지하고 어휘만 행동 이름으로 옮긴다
     description: str
+
+    @property
+    def phase(self) -> str:
+        """실행 시점. tools.POST_SEARCH_TOOLS가 단일 출처다 — 여기서 다시
+        선언하면 두 곳이 어긋났을 때 파일이 검증 전에 만들어질 수 있다."""
+        return PHASE_DEFERRED if self.intent in POST_SEARCH_TOOLS else PHASE_INLINE
 
 
 # 행동 이름 → 명세. SMALLTALK은 여기 없다 — 에이전트가 도구 없이 finish하면
@@ -67,7 +72,6 @@ AGENT_TOOLS: dict[str, AgentTool] = {
     "discharge_days": AgentTool(
         name="discharge_days",
         intent="DISCHARGE_DAYS",
-        phase=PHASE_INLINE,
         node=TOOL_NODES["DISCHARGE_DAYS"],
         description=(
             "전역일을 알려주거나 전역까지 남은 날짜를 묻는 발화 전부 "
@@ -78,7 +82,6 @@ AGENT_TOOLS: dict[str, AgentTool] = {
     "draft_document": AgentTool(
         name="draft_document",
         intent="HWP_DRAFT",
-        phase=PHASE_INLINE,
         node=TOOL_NODES["HWP_DRAFT"],
         description=(
             "사용자가 요청에 담아 준 내용으로 **새 문서 초안**(공문·보고서 등)을 "
@@ -89,7 +92,6 @@ AGENT_TOOLS: dict[str, AgentTool] = {
     "export_hwp": AgentTool(
         name="export_hwp",
         intent="HWP_EXPORT",
-        phase=PHASE_DEFERRED,
         node=TOOL_NODES["HWP_EXPORT"],
         description=(
             "직전 답변이나 지금 만들 답변을 **있는 그대로** 한글 문서 파일로 저장한다. "

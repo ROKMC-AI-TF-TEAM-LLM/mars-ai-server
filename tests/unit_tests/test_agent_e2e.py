@@ -104,22 +104,16 @@ def wire(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
-def _agent_mode(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    """이 파일은 ReAct 배선을 검증한다 — 배포 스위치(AGENT_MODE)와 무관하게 켠다."""
-    monkeypatch.setenv("AGENT_MODE", "true")
+def _isolated_audit_log(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """감사 로그를 임시 경로로 돌린다 (실제 로그 오염 방지)."""
     monkeypatch.setenv("AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     get_config.cache_clear()
     yield
     get_config.cache_clear()
 
 
-# 모듈 전역 graph는 기동 시점의 AGENT_MODE로 컴파일된다. 스위치를 꺼 둔 환경에서도
-# ReAct 루프를 검증할 수 있게 여기서는 에이전트 배선을 직접 컴파일해 쓴다
-_AGENT_GRAPH = graph_module._build_agent_graph().compile()
-
-
 def _invoke(question: str, **extra: Any) -> dict:
-    return _AGENT_GRAPH.invoke({"question": question, "user_department": "", **extra})
+    return graph_module.graph.invoke({"question": question, "user_department": "", **extra})
 
 
 def test_검색_한_번으로_답변까지_완주한다(wire) -> None:
