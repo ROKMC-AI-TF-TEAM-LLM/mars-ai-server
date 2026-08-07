@@ -71,14 +71,20 @@ mars-ai-server/
 │   │   └── graph.py            # chunk -> embed_and_upsert -> END
 │   └── query_graph/
 │       ├── state.py            # QueryState
-│       ├── prompts.py          # 라우터/생성/검증/잡담 시스템 프롬프트
+│       ├── prompts.py          # 에이전트/라우터/생성/검증/잡담 시스템 프롬프트
 │       ├── tools.py            # 도구 레지스트리 (노드·설명·매처·상태문구·단독전용)
+│       ├── agent_tools.py      # ReAct 행동 레지스트리 (이름·phase·관측 포매팅)
+│       ├── retrieval.py        # 검색 파이프라인 함수화 + 근거 병합(예산 절단)
+│       ├── thought.py          # 판단 근거 위생 처리 (검증 밖 노출 텍스트)
+│       ├── query_hygiene.py    # 검색어 위생 (파일 요청 표현 제거) — 라우터·에이전트 공용
 │       ├── tool_fallback.py    # 구조화 호출 3단 안전망 (예시 기반 재시도)
 │       ├── acl.py              # ACL 필터 (표현식 + BM25 후처리)
 │       ├── fusion.py           # RRF 융합
 │       ├── budget.py           # 컨텍스트 토큰 예산 계산 + 대화 이력 절삭
 │       ├── graph.py            # StateGraph 조립 (plan-then-execute 배선·합성)
 │       └── nodes/
+│           ├── agent.py        # AgentAction: 다음 행동 1개 + 판단 근거 (ReAct 판단부)
+│           ├── act.py          # 행동 실행·관측 누적 / 반려 되먹임 / 지연 도구 (ReAct 실행부)
 │           ├── router.py       # ClassifyAndRewrite: 재작성 + 계획(intents) 수립
 │           ├── smalltalk.py    # 잡담 응답 (단독 전용 도구)
 │           ├── discharge_days.py  # 전역일 D-day 계산 (결정적 코드 도구, 예시)
@@ -99,7 +105,50 @@ mars-ai-server/
     └── integration_tests/
 ```
 
-## 4. query_graph 흐름 (10노드 + 도구 노드 + 조건부 분기, plan-then-execute)
+## 4. query_graph 흐름
+
+배선은 두 가지이며 `config.AGENT_MODE`로 고른다. 기본값은 **ReAct 루프**(true)다.
+승격 판단(L40 A/B 측정, `docs/react_migration_plan.md` §8)이 끝나면 한쪽을 삭제한다.
+
+### 4-A. ReAct 루프 (AGENT_MODE=true, 기본)
+
+```
+START → agent ⇄ act              (상한: MAX_AGENT_STEPS=3 / MAX_SEARCH_CALLS=2)
+          ├─(근거 있음)──→ generate → verify ─┬ 통과   → finalize → deferred → END
+          │                    ↑              ├ 재검색 → retry_search → agent
+          │                    └──────────────┤ 재시도 → increment_retry
+          │                                   ├ 근거 0 → knowledge_answer → END
+          │                                   └ 소진   → fallback → END
+          ├─(도구 답변·파일 예약만)→ finalize → deferred → END
+          └─(도구도 검색도 없음)──→ direct_answer → deferred → END
+```
+
+1. **agent** — 다음에 할 행동 **하나**와 그 판단 근거(thought)를 한 번의 구조화
+   호출(`AgentAction`)로 정한다. 행동: `search_documents` | 도구 | `finish`.
+   에이전트는 **답변을 쓰지 않는다** — 근거를 모으는 행동만 고르고, 답변 작성은
+   generate가, 근거 검증은 verify가 그대로 맡는다 (실측으로 균형이 잡힌 두
+   프롬프트를 루프 안으로 옮기지 않기 위한 분업).
+   결정적 안전장치: ① 요청 tool 필드 강제 경로는 LLM 없이 직행 ② 결정적
+   매처(전역일·파일 저장)가 잡은 도구는 LLM 없이 확정하며, 짧은 질문이면
+   그대로 종결(LLM 0회) ③ 구조화 호출 실패 시 1라운드에 한해 **원본 질문으로
+   검색 강제**(= 기존 DOC_SEARCH 폴백) ④ 상한 소진 시 LLM에 묻지 않고 종료
+2. **act** — 행동을 실행하고 **압축된 관측**을 스크래치패드에 쌓는다.
+   검색은 `retrieval.run_search`(dense→bm25→fuse→rerank)를 함수로 호출하며,
+   **검색 범위(ACL·도메인)는 상태에서만 읽는다** — LLM 인자로 받지 않는다.
+   누적 근거는 항상 `merge_chunks`로 `RERANK_TOP_N`개까지만 남긴다(§7 예산 불변식).
+   지연 도구(파일 저장)는 실행하지 않고 **예약만** 한다
+3. **retry_search** — verify 반려 사유를 관측으로 실어 에이전트에게 되돌린다
+   (재검색 1회). 기존 구조가 같은 청크로 다시 쓰는 것뿐이었던 한계를 푼다
+4. **deferred** — 검증 통과 후 예약된 도구(HWP_EXPORT 등)를 실행해 확정 답변
+   뒤에 코드로 이어 붙인다. fallback·knowledge_answer는 이 경로를 타지 않는다
+   (검증 못 받은 답변을 파일로 만들지 않는다 — fail-closed)
+5. **direct_answer** — 도구도 검색도 쓰지 않은 질문(인사·잡담·자기소개).
+   smalltalk 노드가 그대로 이 자리를 맡는다 (grounded=False, sources 비움)
+
+generate / verify / finalize / increment_retry / fallback / knowledge_answer는
+아래 4-B와 **완전히 같은 노드**다. 검증·합성·fail-closed 규칙은 바뀌지 않았다.
+
+### 4-B. plan-then-execute (AGENT_MODE=false, 10노드 + 도구 노드 + 조건부 분기)
 
 ```
 route ─(계획이 SMALLTALK뿐)→ smalltalk ─────────────────────────────→ END
@@ -183,12 +232,31 @@ dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 
 ## 7. 컨텍스트 토큰 예산 (A.X 4.0 Light 16,384 상한)
 
+예산은 **호출별 최댓값**으로 본다. LLM 호출은 각각 독립 컨텍스트라 누적되지 않는다.
+
+**generate 호출 (지배 변수)**
+
 - 시스템 프롬프트: 약 300
 - 검색 컨텍스트 (top_n=5 x 부모 약 1,000): 약 5,000
 - 대화 이력: **상한 1,500** (budget.py에서 최근 턴부터 역순으로 채우고 초과분 절삭)
 - 질문: 약 500
 - 답변 생성 여유: 약 2,000
 - 소계 약 9,300 → `--max-model-len 12288`로 운영 (8192는 여유 부족)
+
+**verify 호출**: 시스템 300 + 근거 5,000 + 답변 약 1,000 + 출력 512 ≈ 6,800
+
+**agent 호출 (ReAct 루프)**: 시스템 약 500 + 이력 ≤1,500 + 질문 500 +
+스크래치패드 **≤1,200** + 출력 512 ≈ 4,200
+
+- 스크래치패드 상한 = `MAX_AGENT_STEPS(3) x 관측 400자(≈180토큰)` + thought·행동 JSON
+- 관측은 요약본이다 (문서명 + 150자 발췌 x 3). 근거 전문은 스크래치패드가
+  아니라 `retrieved_chunks`에 쌓인다
+
+★ **예산 불변식**: 검색을 몇 번 하든 `retrieved_chunks`는 합집합을 리랭크 점수로
+재정렬한 뒤 `RERANK_TOP_N`개로 절단한다 (`retrieval.merge_chunks`).
+**이 절단 덕분에 다중 검색이 generate 컨텍스트를 늘리지 않으며**, 지배 변수는
+여전히 generate의 9,300이라 `--max-model-len 12288`을 유지한다.
+이 불변식은 유닛 테스트로 고정되어 있다 (`test_agent_act.py`).
 
 부모 크기 x top_n이 지배 변수. 청킹 파라미터를 바꾸면 이 표를 재계산한다.
 
@@ -207,6 +275,26 @@ dense_retrieve와 bm25_retrieve는 독립적이라 병렬 가능하지만,
 - 향후 진짜 토큰 스트리밍으로 가려면 미들웨어에 "reset" 류의 이벤트
   타입 추가 협의가 선행되어야 함. 노드 안에서 llm.invoke를 직접 호출하는
   현 구조는 그 전환을 대비해 유지한다
+
+### 8-1. 추론 근거 스트리밍 (ReAct)
+
+답변 본문은 검증 후에야 나가지만, **에이전트의 판단 근거는 실시간으로 흘린다.**
+사용자는 "검색하는 중..."이 아니라 "일수는 확인했는데 신청 절차가 안 나와서
+다시 찾는 중"을 본다.
+
+- 별도 LLM 호출이 없다. `AgentAction` 스키마의 `thought` 필드로 행동 결정과
+  **한 번에** 받는다 (thought를 첫 필드로 두어 모델이 근거를 먼저 쓰게 하는
+  부수 효과도 있다 — 행동 선택 자체의 품질이 올라간다)
+- 발행 시점은 `agent` 노드 완료 직후다. 이때 행동은 정해졌지만 아직 실행 전이라
+  **"설명한 뒤 행동한다"는 순서가 그래프 구조상 보장된다**
+- 전송은 기존 `status` 이벤트의 **선택 필드**(`thought`, `step`)다. 새 이벤트
+  타입도 새 stage 값도 만들지 않으므로, 미들웨어가 모르는 필드를 무시하면
+  현행과 완전히 같이 동작한다 (interfaces.md §5)
+- ⚠️ **thought는 verify를 거치지 않고 사용자에게 보이는 유일한 LLM 텍스트다.**
+  SMALLTALK·HWP_DRAFT와 같은 등급으로 다룬다:
+  프롬프트가 "규정 내용·수치를 쓰지 말 것"을 지시하고, `query_graph/thought.py`가
+  길이(100자)·개행·꺾쇠를 코드로 강제하며, `config.STREAM_THOUGHTS`로 즉시 끌 수 있다.
+  최종 답변(`final_answer`)에는 절대 합성되지 않는다
 
 ## 9. 문서 갱신/삭제 (scripts/reindex_document.py)
 

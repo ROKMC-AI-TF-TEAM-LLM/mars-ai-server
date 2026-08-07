@@ -824,31 +824,33 @@ smalltalk이 이 패턴의 기존 예다. **도구 레지스트리(`query_graph/
 3. **주변 정리** — 유닛 테스트(가짜 LLM), interfaces.md §5·§6 허용값 갱신,
    필요 시 main.py `_status_after_node` 진행 문구
 
-### 패턴 C. 에이전트식 tool-use 루프 (LLM이 도구를 골라 반복 호출)
+### 패턴 C. 에이전트식 tool-use 루프 — **구현 완료** (AGENT_MODE=true가 기본)
 
-LLM이 스스로 "계산기를 써야겠다", "인사 DB를 조회해야겠다"를 판단해
-여러 도구를 연쇄 호출하는 ReAct 구조. LangGraph 표준 패턴은
-**agent 노드 ↔ tool 실행 노드의 루프**다:
+LLM이 스스로 "검색을 더 해야겠다", "파일로 저장해야겠다"를 판단해 도구를
+연쇄 호출하는 ReAct 구조. **이제 이 프로젝트의 기본 배선이다**
+(architecture.md §4-A, 설계 근거는 `docs/react_migration_plan.md`).
 
-```python
-def agent(state):           # LLM이 tool_calls 또는 최종 답을 반환
-def run_tools(state):       # tool_calls를 실제 실행하고 결과를 state에 추가
+구현 위치: `nodes/agent.py`(판단) ↔ `nodes/act.py`(실행),
+행동 레지스트리는 `agent_tools.py`, 배선은 `graph._build_agent_graph()`.
 
-builder.add_conditional_edges("agent",
-    lambda s: "run_tools" if s.get("pending_tool_calls") else "verify")
-builder.add_edge("run_tools", "agent")   # 결과를 들고 다시 판단
-```
+도입하며 지킨 것 — **새 행동을 추가할 때도 이 다섯은 그대로 지킬 것**:
 
-이 패턴을 도입할 때 이 프로젝트에서 반드시 지켜야 할 것:
+- **루프 상한**: `MAX_AGENT_STEPS`(라운드) + `MAX_SEARCH_CALLS`(검색) 이중 상한.
+  소진 시 LLM에 묻지 않고 종료한다. 동일 검색어 반복도 코드로 차단
+- **도구도 에어갭**: 행동이 호출하는 대상은 localhost 서비스와 로컬 자원뿐.
+  검색 범위(ACL·도메인)는 **상태에서만** 읽고 LLM 인자로 받지 않는다
+- **verify는 그대로 통과**: 답변 작성은 여전히 generate가, 검증은 verify가 한다.
+  에이전트의 권한은 **근거 수집과 액션 실행까지**이며 답변을 쓰지 않는다.
+  관측(observation)은 `<observation>` delimiter로 격리해 인젝션 방어를 유지한다
+- **감사 로그 확장**: `tool_calls`(행동·인자·thought)와 `agent_steps`를 남긴다
+- **토큰 예산 재계산**: architecture.md §7에 agent 호출 몫과 **예산 불변식**
+  (검색을 몇 번 하든 근거는 `RERANK_TOP_N`개로 절단)을 명시했다
 
-- **루프 상한**: retry_count처럼 도구 호출 횟수 상한을 두고 소진 시 fallback
-  (무한 루프 = 16K 토큰 예산 파괴)
-- **도구도 에어갭**: 도구가 호출하는 대상은 localhost 서비스나 로컬 자원만
-- **verify는 그대로 통과**: 도구 결과를 근거로 쓴 답변도 fail-closed 검증을
-  거친다. 도구 결과를 `<document>`처럼 delimiter로 격리해 인젝션 방어 유지
-- **감사 로그 확장**: 어떤 도구를 어떤 인자로 호출했는지 기록
-- **토큰 예산 재계산**: 도구 결과가 컨텍스트에 쌓이므로 architecture.md §7
-  표에 도구 결과 몫을 추가
+7B의 구조화 출력 안정성 문제는 `response_format=json_schema`(문법 강제)가
+주 경로가 되면서 크게 완화됐다 (tool_fallback.py 모듈 docstring 참조).
+그래도 **결정적 폴백을 반드시 남긴다**: 구조화 호출이 실패하면 1라운드에 한해
+원본 질문으로 검색을 강제해, 에이전트가 완전히 실패해도 기존 DOC_SEARCH 경로와
+같게 동작한다.
 
-C는 A.X 4.0 Light(7B)의 tool-calling 안정성에 크게 의존하므로,
-L40에서 7단계 성공률 측정 후 도입 여부를 판단하는 것을 권한다.
+기존 plan-then-execute 배선은 `AGENT_MODE=false`로 남아 있다 (L40 A/B 측정용).
+승격 판단이 끝나면 한쪽을 삭제한다.

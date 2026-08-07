@@ -1,6 +1,17 @@
 # react_migration_plan.md — plan-then-execute → ReAct 전환 계획
 
-> 상태: **계획 단계 (미적용)**. 이 문서는 설계 합의용이며 코드 변경은 아직 없다.
+> 상태: **Phase 1~5 구현 완료** (브랜치 `refeat/#2-react`, `AGENT_MODE=true`가 기본).
+> 남은 것은 Phase 0(기준선 측정)·Phase 6(L40 A/B 측정)·Phase 7(승격 또는 롤백)이며,
+> 전부 **실서버가 필요한 측정 작업**이다. 승격 기준은 §8 Phase 6 참조.
+>
+> 구현하며 계획과 달라진 점:
+> - 계획 작성 이후 `call_with_schema`의 주 경로가 `response_format=json_schema`
+>   (문법 강제)로 바뀌어, §10의 최대 리스크("7B 다단 tool-call 실패")가 크게 완화됐다
+> - `knowledge_answer` 경로가 새로 생겨서, verify 분기에서 **재검색을
+>   knowledge_answer보다 앞에** 두었다 (§4 D5 → graph.after_verify_agent)
+> - 행동 설명은 `TOOL_DESCRIPTIONS` 재사용이 아니라 별도로 둔다.
+>   라우터용 설명에는 intent 이름(DOC_SEARCH 등)이 본문에 섞여 있어, 그대로
+>   보여주면 모델이 행동 이름 대신 그 값을 출력해 검색이 통째로 사라진다
 
 본 문서는 현행 `query_graph`(plan-then-execute)를 ReAct 방식(에이전트 ↔ 도구
 실행 루프)으로 바꾸고, **추론 단계에서 LLM이 판단한 근거를 프론트로 스트리밍**

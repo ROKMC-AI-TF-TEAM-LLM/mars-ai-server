@@ -30,6 +30,11 @@ from pydantic import BaseModel, field_validator
 
 from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import ROUTER_SYSTEM_TEMPLATE
+from ax_rag.query_graph.query_hygiene import (
+    MATCHER_ONLY_MAX_CHARS,
+    SEARCH_HINT_RE,
+    strip_file_phrases,
+)
 from ax_rag.query_graph.state import QueryState
 from ax_rag.query_graph.tool_fallback import call_with_schema
 from ax_rag.query_graph.tools import (
@@ -58,48 +63,11 @@ _MAX_PLAN_STEPS = 3
 # 무한정 늘리지 않는다 (임베딩은 배치 1회라 비용이 늘지 않는다)
 _MAX_SEARCH_QUERIES = 3
 
-# 결정적 매처 단독 종결 기준: 이 길이 이하의 질문은 복합일 가능성이 낮아
-# 매처 히트 시 LLM 없이 도구 단독 계획으로 직행한다 (LLM 0회 이점 유지).
-# 긴 질문은 다른 요청이 섞였을 수 있어 LLM 분류를 함께 태운다
-_MATCHER_ONLY_MAX_CHARS = 30
-
-# 검색 동반 신호: 짧은 질문이라도 이 표현이 섞이면 매처 단독 종결하지 않고
-# LLM 분류를 병행한다 — "해병대 주임무 찾아서 한글 파일로 저장해줘"(28자)가
-# 매처 단독으로 검색 없이 저장만 실행되는 사고 실측. 매처 도구는 계획에
-# 보장 포함되므로 검색 여부만 LLM이 판단하면 된다.
-# "조사·정리·요약해서 문서로" 류의 검색 선행 표현을 폭넓게 포함한다
-_SEARCH_HINT_RE = re.compile(
-    r"찾아|검색|알아보|알려주|조사|조회|정리|요약|참고|바탕으로|근거로|기반으로"
-)
-
-# 검색 쿼리 오염 제거: 계획이 [검색 + 파일 도구]일 때 재작성 쿼리에 남은
-# 파일 생성 요청 표현을 결정적으로 걷어낸다. 실측: "해병대 관련 내용을
-# 조사하여 문서로 만들어줘"는 리랭크 최고점 0.022(전멸), "해병대 관련 내용"은
-# 0.738 — 도구 표현이 점수를 30배 붕괴시킨다. 프롬프트 지시만으로는 7B가
-# 재작성에서 요청 표현을 못 떼는 경우가 있어 코드로 보강한다
-_FILE_REQUEST_RE = re.compile(
-    r"(이\s*답변\s*[을를]?\s*)?(한글\s*)?(문서|파일)\s*(로|[을를])?\s*"
-    r"(만들|생성|저장|내보내|출력|뽑|변환)\w*|문서화\s*해?\w*"
-)
-# 파일 표현 제거 후 끝에 남는 검색 동사 꼬리("...을 조사하여")도 정리한다
-_TRAILING_SEARCH_VERB_RE = re.compile(r"[을를]?\s*(조사|조회|검색|정리|요약|알아보|찾아)\w*\s*$")
-
-
-def _strip_file_phrases(query: str) -> str:
-    """검색 쿼리에서 파일 생성 요청 표현과 꼬리 동사를 제거한다.
-
-    제거 결과가 너무 짧으면(검색어 실종) 원본을 유지한다 — 오염된 쿼리라도
-    없는 것보다는 낫다.
-    """
-    cleaned = _FILE_REQUEST_RE.sub(" ", query)
-    if cleaned == query:
-        return query  # 파일 요청 표현이 없으면 손대지 않는다 (순수 검색어 보존)
-    # 파일 표현을 걷어낸 자리에 남은 검색 동사 꼬리("…을 조사하여")를 정리한다
-    cleaned = _TRAILING_SEARCH_VERB_RE.sub(" ", cleaned)
-    # 끝에 남은 접속 어미·조사만 정리 (명사 일부를 깎지 않게 정확 일치로)
-    cleaned = re.sub(r"(하고|하여|해서|[을를])\s*$", "", cleaned.strip())
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.~")
-    return cleaned if len(cleaned) >= 2 else query
+# 쿼리 위생 규칙은 ReAct 에이전트와 공유한다 (query_hygiene.py).
+# 기존 이름으로도 계속 참조할 수 있게 별칭을 남긴다
+_MATCHER_ONLY_MAX_CHARS = MATCHER_ONLY_MAX_CHARS
+_SEARCH_HINT_RE = SEARCH_HINT_RE
+_strip_file_phrases = strip_file_phrases
 
 
 class ClassifyAndRewrite(BaseModel):

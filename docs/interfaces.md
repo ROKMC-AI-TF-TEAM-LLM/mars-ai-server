@@ -238,7 +238,9 @@ async def stream_answer(final_answer: str, sources: list[dict],
 이벤트는 `data: {JSON}\n\n` 형식. 타입 6종 + 종료 신호:
 
 ```
-data: {"type":"status","stage":"retrieve","message":"사내 문서를 검색하는 중..."}
+data: {"type":"status","stage":"retrieve","message":"사내 문서를 검색하는 중...","thought":"휴가 규정을 문서에서 찾는다","step":1}
+
+data: {"type":"status","stage":"retrieve","message":"근거를 더 찾는 중...","thought":"일수는 확인했지만 신청 절차가 없어 다시 찾는다","step":2}
 
 data: {"type":"status","stage":"generate","message":"답변을 생성하는 중..."}
 
@@ -260,8 +262,18 @@ data: {"type":"done"}
   도구별 문구, tools.TOOL_STATUS_MESSAGES) | `retrieve`(검색) |
   `rerank`(문서 선별) | `generate`(답변 생성) | `verify`(근거 검증).
   프론트는 message를 로딩 인디케이터로 표시하고 첫 text 수신 시 제거한다.
-  복합 계획이면 tool → retrieve처럼 stage가 여러 번 바뀔 수 있다.
+  복합 계획이면 tool → retrieve처럼 stage가 여러 번 바뀔 수 있고, ReAct
+  에이전트가 재검색하면 **같은 stage가 여러 번** 올 수 있다 (문구는 달라진다).
   클라이언트는 미지의 type·stage를 무시(문구만 표시)하도록 구현한다 (향후 확장 대비)
+  - `thought`(선택), `step`(선택): 에이전트가 **왜 이 행동을 하는지** 한 문장으로
+    밝힌 판단 근거와 라운드 번호. 행동을 실행하기 **전에** 보내므로 프론트는
+    "지금 무엇을 왜 하는 중인지"를 실시간으로 보여줄 수 있다.
+    **이 두 필드는 없을 수도 있다** — 무시하면 기존과 똑같이 동작하므로
+    미들웨어를 고치지 않아도 호환된다. 표시할 때는 답변 본문과 구분되게
+    (회색 보조 텍스트 등) 두는 것을 권한다.
+    ⚠️ thought는 **근거 검증(verify)을 거치지 않은 텍스트**다. 서버가 길이·형식을
+    다듬고 "규정 내용·수치를 쓰지 말 것"을 프롬프트로 지시하지만, 답변 본문과
+    같은 수준으로 신뢰할 값이 아니다. 서버 쪽에서 config.STREAM_THOUGHTS로 끌 수 있다
 - `file`(0회 이상): 도구가 생성한 파일(HWPX 등)의 **구조화 신호**.
   text 전송이 끝난 뒤 sources 전에 온다. 필드: `name`(파일명),
   `url`(/files/{URL인코딩 파일명}), `tool`(생성 도구 — HWP_EXPORT 등).

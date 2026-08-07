@@ -58,3 +58,26 @@ class QueryState(TypedDict):
     # 도구 단독 경로(SMALLTALK 등)는 채우지 않는다 (문서 답변 경로가 아니다).
     # 감사 로그와 SSE notice 이벤트가 이 값을 쓴다
     answer_mode: str | None
+
+    # ── ReAct 에이전트 루프 (AGENT_MODE=true일 때만 채워진다) ──────────────
+    # 지금까지 한 행동과 그 관측(요약본): [{"action","thought","observation"}].
+    # ★ 근거 전문은 여기 넣지 않는다 — retrieved_chunks에 쌓고 여기에는 발췌만
+    # 남긴다. 스크래치패드가 부풀면 16K 예산이 깨진다
+    agent_scratchpad: list[dict] | None
+    # 직전 라운드의 판단 근거. SSE status 이벤트로 사용자에게 표시된다.
+    # ⚠️ verify를 거치지 않는 텍스트다 — thought.sanitize_thought로 위생 처리한다
+    agent_thought: str | None
+    agent_steps: int  # 소비한 판단 라운드 수 (MAX_AGENT_STEPS 상한)
+    search_calls: int  # 소비한 검색 횟수 (MAX_SEARCH_CALLS 상한)
+    searched_queries: list[str] | None  # 중복 검색 차단용
+    # agent가 정한 다음 행동과 인자. act 노드가 실행하고 분기가 이 값을 읽는다
+    next_action: str | None
+    next_action_args: dict | None
+    # 결정적으로 확정된 단독 행동이라 실행 후 LLM에 다시 묻지 않는다는 표시
+    force_finish: bool | None
+    # 검증 통과 후 실행할 도구 목록 (파일 저장 등). 검증 실패 시 실행되지 않는다
+    deferred_actions: list[str] | None
+    # verify 반려 사유를 에이전트에게 되돌린 적이 있는지 (재검색 1회 제한)
+    verify_feedback_used: bool | None
+    # 감사 로그용 도구 호출 기록: [{"step","action","thought","query"}]
+    tool_calls_log: list[dict] | None

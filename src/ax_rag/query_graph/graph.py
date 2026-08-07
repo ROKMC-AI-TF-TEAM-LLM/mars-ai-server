@@ -1,4 +1,23 @@
-"""query_graph 전체 조립 (architecture.md §4) — plan-then-execute.
+"""query_graph 전체 조립 (architecture.md §4).
+
+두 가지 배선을 담고 있으며 config.AGENT_MODE로 고른다:
+
+**AGENT_MODE=true — ReAct 루프** (docs/react_migration_plan.md)
+
+    START → agent ⇄ act              (상한: MAX_AGENT_STEPS / MAX_SEARCH_CALLS)
+              ├─(근거 있음)──→ generate → verify ─┬ 통과   → finalize → deferred → END
+              │                    ↑              ├ 재검색 → retry_search → agent
+              │                    └──────────────┤ 재시도 → increment_retry
+              │                                   ├ 근거 0 → knowledge_answer → END
+              │                                   └ 소진   → fallback → END
+              ├─(도구 답변만)──→ finalize → deferred → END
+              └─(도구·검색 없음)→ direct_answer → deferred → END
+
+    에이전트는 **근거를 모으는 행동만** 고른다. 답변은 generate가 쓰고
+    verify가 검사한다 — 실측으로 균형이 잡힌 두 프롬프트를 루프 안으로
+    옮기지 않기 위한 분업이다.
+
+**AGENT_MODE=false — 기존 plan-then-execute** (아래 설명 그대로)
 
 route가 계획(intents)을 확정하면 실행 큐(pending_intents)를 따라 진행한다:
 
@@ -23,6 +42,9 @@ from collections.abc import Callable
 
 from langgraph.graph import END, START, StateGraph
 
+from ax_rag.query_graph.agent_tools import ACTION_FINISH
+from ax_rag.query_graph.nodes.act import act, retry_search, run_deferred
+from ax_rag.query_graph.nodes.agent import agent
 from ax_rag.query_graph.nodes.bm25_retrieve import bm25_retrieve
 from ax_rag.query_graph.nodes.dense_retrieve import dense_retrieve
 from ax_rag.query_graph.nodes.fuse import fuse
@@ -30,11 +52,16 @@ from ax_rag.query_graph.nodes.generate import generate
 from ax_rag.query_graph.nodes.knowledge_answer import generate_knowledge_answer
 from ax_rag.query_graph.nodes.rerank import rerank
 from ax_rag.query_graph.nodes.router import route
+from ax_rag.query_graph.nodes.smalltalk import smalltalk
 from ax_rag.query_graph.nodes.verify import verify
 from ax_rag.query_graph.prompts import FALLBACK_ANSWER, FALLBACK_DOMAIN_SCOPED_TEMPLATE
 from ax_rag.query_graph.stages import (
+    NODE_ACT,
+    NODE_AGENT,
     NODE_BM25_RETRIEVE,
+    NODE_DEFERRED,
     NODE_DENSE_RETRIEVE,
+    NODE_DIRECT_ANSWER,
     NODE_FALLBACK,
     NODE_FINALIZE,
     NODE_FUSE,
@@ -42,6 +69,7 @@ from ax_rag.query_graph.stages import (
     NODE_INCREMENT_RETRY,
     NODE_KNOWLEDGE_ANSWER,
     NODE_RERANK,
+    NODE_RETRY_SEARCH,
     NODE_ROUTE,
     NODE_VERIFY,
 )
@@ -284,6 +312,144 @@ def after_verify(state: QueryState) -> str:
     return NODE_FALLBACK
 
 
+# ── ReAct 루프 분기 (AGENT_MODE=true) ─────────────────────────────────────
+
+
+def _finish_target(state: QueryState) -> str:
+    """루프 종료 후 갈 곳을 고른다.
+
+    - 근거가 있거나 검색을 시도했으면 → generate (검색 0건이면 빈 초안 →
+      verify fail-closed → knowledge_answer/fallback으로 이어진다. 이 경로를
+      유지해야 "근거 0건" 판정이 종전대로 작동한다)
+    - 검색은 없었지만 도구 답변·예약이 있으면 → finalize (도구 산출물만 확정)
+    - 아무것도 없으면 → direct_answer (인사·잡담·자기소개)
+    """
+    if (state.get("retrieved_chunks") or []) or (state.get("search_calls") or 0):
+        return NODE_GENERATE
+    if (state.get("tool_answers") or []) or (state.get("deferred_actions") or []):
+        return NODE_FINALIZE
+    return NODE_DIRECT_ANSWER
+
+
+def after_agent(state: QueryState) -> str:
+    """agent 판단 후 분기: 행동을 실행하거나(act) 루프를 끝낸다."""
+    if str(state.get("next_action") or ACTION_FINISH) == ACTION_FINISH:
+        return _finish_target(state)
+    return NODE_ACT
+
+
+def after_act(state: QueryState) -> str:
+    """act 실행 후 분기: 다시 판단하거나(agent) 루프를 끝낸다.
+
+    라운드 상한을 다 썼으면 에이전트에게 되묻지 않고 끝낸다 — 물어봐야 답은
+    정해져 있고 LLM 호출만 한 번 더 나간다. 검색 상한은 여기서 보지 않는다:
+    검색을 다 썼어도 남은 라운드로 다른 도구를 고를 수 있고, 검색 요청이
+    들어오면 agent 노드가 종료로 바꾼다.
+    """
+    if state.get("force_finish"):
+        return _finish_target(state)
+    if (state.get("agent_steps") or 0) >= get_config().MAX_AGENT_STEPS:
+        return _finish_target(state)
+    return NODE_AGENT
+
+
+def _can_retry_search(state: QueryState) -> bool:
+    """검증 반려를 에이전트에게 되돌려 재검색할 수 있는 상황인지 판정한다.
+
+    한 번만 허용한다 (verify_feedback_used). 상한을 이미 썼으면 되돌려도
+    에이전트가 검색을 못 하므로 의미가 없다.
+    """
+    config = get_config()
+    if not (config.AGENT_MODE and config.AGENT_VERIFY_FEEDBACK):
+        return False
+    if state.get("verify_feedback_used"):
+        return False
+    return (state.get("search_calls") or 0) < config.MAX_SEARCH_CALLS and (
+        state.get("agent_steps") or 0
+    ) < config.MAX_AGENT_STEPS
+
+
+def after_verify_agent(state: QueryState) -> str:
+    """ReAct 모드의 verify 분기.
+
+    재검색을 **knowledge_answer보다 앞에** 둔다. 문서로 답할 기회를 다 쓰기
+    전에 검증 없는 지식 답변으로 내려가면, 재검색으로 찾을 수 있었던 근거를
+    버리게 된다. 그 외 순서와 fail-closed 원칙은 기존 분기와 같다.
+    """
+    if state.get("grounded"):
+        return NODE_FINALIZE
+    if _can_retry_search(state):
+        return NODE_RETRY_SEARCH
+    if _can_answer_from_knowledge(state):
+        return NODE_KNOWLEDGE_ANSWER
+    if (state.get("retry_count") or 0) < get_config().MAX_VERIFY_RETRY:
+        return NODE_INCREMENT_RETRY
+    return NODE_FALLBACK
+
+
+def direct_answer(state: QueryState) -> dict:
+    """도구도 검색도 쓰지 않은 질문에 답한다 (인사·잡담·자기소개).
+
+    smalltalk 노드를 그대로 쓴다 — 정체성 프롬프트와 grounded=False 계약이
+    이미 그 노드에 있다. ReAct에서는 "잡담 도구를 실행"하는 대신 에이전트가
+    아무 도구도 쓰지 않고 끝낸 경우가 이 경로다.
+    """
+    return smalltalk(state)
+
+
+def _build_agent_graph() -> StateGraph:
+    """ReAct 루프 배선."""
+    builder = StateGraph(QueryState)
+    builder.add_node(NODE_AGENT, agent)
+    builder.add_node(NODE_ACT, act)
+    builder.add_node(NODE_GENERATE, generate)
+    builder.add_node(NODE_VERIFY, verify)
+    builder.add_node(NODE_RETRY_SEARCH, retry_search)
+    builder.add_node(NODE_FINALIZE, finalize)
+    builder.add_node(NODE_INCREMENT_RETRY, increment_retry)
+    builder.add_node(NODE_FALLBACK, fallback)
+    builder.add_node(NODE_KNOWLEDGE_ANSWER, knowledge_answer)
+    builder.add_node(NODE_DIRECT_ANSWER, direct_answer)
+    builder.add_node(NODE_DEFERRED, run_deferred)
+
+    loop_targets = {
+        NODE_ACT: NODE_ACT,
+        NODE_AGENT: NODE_AGENT,
+        NODE_GENERATE: NODE_GENERATE,
+        NODE_FINALIZE: NODE_FINALIZE,
+        NODE_DIRECT_ANSWER: NODE_DIRECT_ANSWER,
+    }
+    builder.add_edge(START, NODE_AGENT)
+    builder.add_conditional_edges(NODE_AGENT, after_agent, loop_targets)
+    builder.add_conditional_edges(NODE_ACT, after_act, loop_targets)
+    builder.add_edge(NODE_GENERATE, NODE_VERIFY)
+    builder.add_conditional_edges(
+        NODE_VERIFY,
+        after_verify_agent,
+        {
+            NODE_FINALIZE: NODE_FINALIZE,
+            NODE_RETRY_SEARCH: NODE_RETRY_SEARCH,
+            NODE_KNOWLEDGE_ANSWER: NODE_KNOWLEDGE_ANSWER,
+            NODE_INCREMENT_RETRY: NODE_INCREMENT_RETRY,
+            NODE_FALLBACK: NODE_FALLBACK,
+        },
+    )
+    builder.add_edge(NODE_RETRY_SEARCH, NODE_AGENT)
+    builder.add_edge(NODE_INCREMENT_RETRY, NODE_GENERATE)
+    # 지연 도구(파일 저장 등)는 확정된 답변 뒤에만 실행된다.
+    # fallback·knowledge_answer는 이 경로를 타지 않는다 — 검증을 통과하지
+    # 못한 답변을 파일로 만들지 않는다 (fail-closed)
+    builder.add_edge(NODE_FINALIZE, NODE_DEFERRED)
+    builder.add_edge(NODE_DIRECT_ANSWER, NODE_DEFERRED)
+    builder.add_edge(NODE_DEFERRED, END)
+    builder.add_edge(NODE_FALLBACK, END)
+    builder.add_edge(NODE_KNOWLEDGE_ANSWER, END)
+    return builder
+
+
+# ── 기존 plan-then-execute 배선 (AGENT_MODE=false) ─────────────────────────
+
+
 def _build_graph() -> StateGraph:
     builder = StateGraph(QueryState)
     builder.add_node(NODE_ROUTE, route)
@@ -358,4 +524,17 @@ def _build_graph() -> StateGraph:
     return builder
 
 
-graph = _build_graph().compile()
+def build_graph() -> StateGraph:
+    """설정에 맞는 배선을 고른다 (AGENT_MODE 스위치).
+
+    승격 판단(L40 A/B 측정)이 끝나면 한쪽을 삭제하고 이 분기도 없앤다 —
+    두 배선을 오래 끌고 가면 유지보수 부채가 된다.
+    """
+    if get_config().AGENT_MODE:
+        logger.info("query_graph 배선: ReAct 에이전트 루프 (AGENT_MODE=true)")
+        return _build_agent_graph()
+    logger.info("query_graph 배선: plan-then-execute (AGENT_MODE=false)")
+    return _build_graph()
+
+
+graph = build_graph().compile()
