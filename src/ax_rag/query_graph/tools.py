@@ -1,25 +1,31 @@
-"""도구 레지스트리: intent 값 → 처리 노드 (code_guide.md §12 패턴 B의 구현).
+"""도구 레지스트리: intent 값 → 처리 노드 + 미들웨어 계약 어휘.
+
+이 파일은 **intent 이름 체계**를 소유한다. 그 이름이 API 계약(POST /query의
+tool 필드, GET /capabilities)에 그대로 노출되기 때문이다. 에이전트가 부르는
+**행동 이름**은 별개이며 agent_tools.py가 소유한다 (intent ↔ 행동 매핑도 거기).
 
 커스텀 도구 추가 절차:
 1) nodes/<도구>.py 작성 — smalltalk과 동일 계약: state를 받아
    tool_contract.tool_answer(답변)의 반환값을 그대로 돌려준다
    (반환 dict를 손으로 적지 말 것 — grounded 누락 시 검증 실패 답변에
    출처가 붙는다. 파일을 만드는 도구는 generated_files 인자를 함께 넘긴다)
-2) 아래 TOOL_NODES에 노드 등록 + TOOL_DESCRIPTIONS에 분류 기준 한 줄
-3) (선택) 결정적으로 감지 가능한 도구면 TOOL_MATCHERS에 매처 등록 —
-   LLM 분류보다 먼저 코드로 판정해 오분류·지연을 없앤다
-4) (선택) 복합 계획에 섞이면 안 되는 도구면 TERMINAL_ONLY_TOOLS에 추가
+2) 아래 TOOL_NODES에 노드 등록 + TOOL_DESCRIPTIONS에 한 줄 설명
+   + TOOL_HANDLED_LABELS에 예시 없는 짧은 라벨
+3) agent_tools.AGENT_TOOLS에 행동 등록 (이름·설명). 실행 시점은 아래
+   POST_SEARCH_TOOLS 포함 여부로 자동 결정된다
+4) (선택) 결정적으로 감지 가능한 도구면 TOOL_MATCHERS에 매처 등록 —
+   LLM 판단보다 먼저 코드로 확정해 오분류·지연을 없앤다
 5) (선택) "방금 만든 답변"을 입력으로 쓰는 도구면 POST_SEARCH_TOOLS에 추가
-   — 검색 파이프라인 뒤(finalize 후)에 실행된다. 검증 실패 시 미실행
+   — 검증 통과 뒤에 실행된다 (검증 실패 시 미실행)
 6) (선택) 실행 중 프론트에 보여줄 문구를 TOOL_STATUS_MESSAGES에 등록
    (미등록이면 기본 문구 "요청을 처리하는 중...")
 
-이것만으로 그래프 배선(graph.py — 복합 계획 편입 포함), 라우터 분류
-항목(router.py), 강제 선택 허용값(main.normalize_tool)이 전부 자동 반영된다.
+이것만으로 그래프 배선, 에이전트 프롬프트의 행동 목록, 진행 안내 문구,
+강제 선택 허용값(api.normalize_tool), /capabilities 응답이 전부 자동 반영된다.
 
-DOC_SEARCH는 도구가 아니라 기본 파이프라인(검색→생성→검증)이므로
-TOOL_NODES에 넣지 않는다. 도메인 한정 검색(교범/훈령 모드)도 도구가 아니라
-요청의 domain 필드로 처리한다 (interfaces.md §5).
+DOC_SEARCH는 도구가 아니라 검색 경로 이름이므로 TOOL_NODES에 넣지 않는다.
+도메인 한정 검색(교범/훈령 모드)도 도구가 아니라 요청의 domain 필드로
+처리한다 (interfaces.md §5).
 """
 
 from __future__ import annotations
@@ -107,24 +113,15 @@ TOOL_STATUS_MESSAGES: dict[str, str] = {
 DEFAULT_TOOL_STATUS_MESSAGE = "요청을 처리하는 중..."
 
 
-# 복합 계획(여러 경로 합성)에 섞일 수 없는 단독 전용 도구.
-# - SMALLTALK: verify 밖 자유 생성이라 업무 답변과 한 응답으로 합성하지 않는다
-# - HWP_DRAFT: 사용자 제공 내용의 초안 작성은 자체 완결 작업이다 (검색 결과
-#   저장이 필요한 복합 요청은 HWP_EXPORT가 후처리로 담당)
-TERMINAL_ONLY_TOOLS: frozenset[str] = frozenset({"SMALLTALK", "HWP_DRAFT"})
-
-
-# 후처리 도구: 검색 파이프라인(verify·finalize) **뒤에** 실행된다.
+# 지연 실행 도구: 검증(verify)·확정(finalize) **뒤에** 실행된다.
 # HWP_EXPORT처럼 "방금 만든 답변"을 입력으로 쓰는 도구가 여기 속한다 —
-# "휴가 규정 찾아서 한글 파일로 저장해줘" 복합 질문에서 검증 통과한 답변을
-# 파일로 만든다. 검증 실패(fallback) 시에는 실행되지 않는다 (실패 답변을
-# 파일로 만들지 않는다 — fail-closed)
+# "휴가 규정 찾아서 한글 파일로 저장해줘" 요청에서 검증 통과한 답변을
+# 파일로 만든다. 검증 실패(fallback·knowledge) 시에는 실행되지 않는다
+# (실패 답변을 파일로 만들지 않는다 — fail-closed).
+#
+# 이 집합이 **단일 출처**다: agent_tools가 여기서 행동의 실행 시점(phase)을
+# 끌어가고, 아래 format_handled_note가 generate·verify 안내문에 쓴다.
 POST_SEARCH_TOOLS: frozenset[str] = frozenset({"HWP_EXPORT"})
-
-
-def valid_intents() -> tuple[str, ...]:
-    """허용되는 intent 값 전체 (기본 경로 + 등록된 도구)."""
-    return (DOC_SEARCH, *TOOL_NODES)
 
 
 def format_handled_note(state: QueryState, template: str) -> str:
@@ -152,44 +149,3 @@ def format_handled_note(state: QueryState, template: str) -> str:
         return ""
     lines = "\n".join(f"- {TOOL_HANDLED_LABELS.get(name, name)}" for name in handled if name)
     return template.format(handled=lines)
-
-
-def plan_of(state: QueryState) -> list[str]:
-    """상태에서 처리 계획(intents)을 읽는다. 구형 단일 intent 상태도 허용한다 (방어적).
-
-    route가 항상 intents를 채우지만, 계획 이전 형태의 상태(대표 intent만 있는
-    입력·테스트 픽스처)로도 그래프가 진행되게 한다. 미지의 intent 값은
-    DOC_SEARCH로 떨어뜨린다 — 존재하지 않는 노드로 분기하지 않기 위해서다.
-    """
-    plan = state.get("intents")
-    if plan:
-        return list(plan)
-    intent = state.get("intent") or DOC_SEARCH
-    return [intent if intent in valid_intents() else DOC_SEARCH]
-
-
-def resolve_pending(state: QueryState) -> list[str]:
-    """남은 실행 큐(pending_intents)를 읽는다. 없으면 계획에서 재구성한다 (방어적).
-
-    그래프 분기(graph.next_step)와 진행 상태 안내(stages.status_after_node)가
-    같은 큐 해석을 쓰도록 한 곳에 모은다.
-    """
-    pending = state.get("pending_intents")
-    if pending is None:  # 구형 상태: 계획에서 실행 큐를 재구성
-        return execution_queue(plan_of(state))
-    return list(pending)
-
-
-def execution_queue(plan: list[str]) -> list[str]:
-    """계획(intents)을 실행 순서로 바꾼다:
-    [전처리 도구들(계획 순서)] → DOC_SEARCH → [후처리 도구들(계획 순서)].
-
-    전처리 도구(D-day 등)는 검색과 독립이라 앞에, 후처리 도구(HWP_EXPORT 등,
-    POST_SEARCH_TOOLS)는 방금 만든 답변을 입력으로 쓰므로 검색 파이프라인
-    뒤에 둔다. 최종 답변의 합성 순서는 실행 순서가 아니라 계획(intents)
-    순서를 따른다 (graph._compose_final).
-    """
-    pre = [n for n in plan if n != DOC_SEARCH and n not in POST_SEARCH_TOOLS]
-    post = [n for n in plan if n in POST_SEARCH_TOOLS]
-    middle = [DOC_SEARCH] if DOC_SEARCH in plan else []
-    return [*pre, *middle, *post]

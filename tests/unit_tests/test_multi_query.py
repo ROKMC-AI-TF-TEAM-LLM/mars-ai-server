@@ -1,9 +1,14 @@
-"""다중 쿼리 검색 테스트 — 쿼리 생성, 쿼리별 검색, 가중 쿼터 병합.
+"""다중 쿼리 검색 테스트 — 쿼리별 검색과 가중 쿼터 병합.
 
 배경: 단일 쿼리는 하나의 의미 이웃만 긁어 다면적 질문에서 근거가 한쪽으로
 쏠린다 (실측: "조건·기간·신청 방법"을 물었는데 근거 청크 1건).
 쿼리를 나눠 검색하되 **대표 쿼리 몫을 지켜** 기존에 잘 찾던 문서가 밀려나지
 않게 한다.
+
+ReAct 전환 후 한 번의 run_search는 쿼리 하나만 쓰고, 여러 측면은 에이전트가
+**라운드를 나눠** 검색해 근거를 누적한다. 아래 노드들의 다중 쿼리 지원은
+그대로 두었다 — 평가 스크립트가 쓰고, 향후 한 라운드 안에서 다면 검색을
+할 때 재사용된다.
 """
 
 from __future__ import annotations
@@ -14,33 +19,7 @@ from ax_rag.query_graph.fusion import merge_query_results
 from ax_rag.query_graph.nodes import bm25_retrieve as bm25_module
 from ax_rag.query_graph.nodes import dense_retrieve as dense_module
 from ax_rag.query_graph.nodes.fuse import fuse
-from ax_rag.query_graph.nodes.router import _build_search_queries
 from ax_rag.shared.config import get_config
-
-# ── 쿼리 생성 (결정적) ─────────────────────────────────────────────────────
-
-
-def test_재작성과_원본이_다르면_둘_다_검색한다() -> None:
-    queries = _build_search_queries("휴가규정", "휴가 규정 전반에 대해 알려줘", [])
-    assert queries[0] == "휴가규정"  # 대표 쿼리가 항상 첫 번째
-    assert "휴가 규정 전반에 대해 알려줘" in queries
-
-
-def test_공백만_다르면_같은_쿼리로_보고_하나만_쓴다() -> None:
-    assert _build_search_queries("휴가 규정", "휴가규정", []) == ["휴가 규정"]
-
-
-def test_멀티턴이면_대표_쿼리만_쓴다() -> None:
-    """'그거 얼마나 써?' 같은 맥락 의존 표현은 검색어로 잡음이다."""
-    history = [{"role": "user", "content": "육아휴직 알려줘"}]
-    assert _build_search_queries("육아휴직 사용 기간", "그거 얼마나 써?", history) == [
-        "육아휴직 사용 기간"
-    ]
-
-
-def test_쿼리_수는_상한을_넘지_않는다() -> None:
-    assert len(_build_search_queries("가", "나 다 라 마 바", [])) <= 3
-
 
 # ── 쿼리별 검색 ────────────────────────────────────────────────────────────
 

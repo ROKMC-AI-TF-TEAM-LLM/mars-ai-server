@@ -159,9 +159,20 @@ def verify(state: QueryState) -> dict:
         # ── 부분 수용: 지목된 문장만 덜어내고 재검증 ──────────────────────
         unsupported = [str(item) for item in (args.get("unsupported") or [])]
         if not unsupported:
+            # ★ 이 상태가 진단의 핵심 신호다: 검증기가 "근거 없다"면서 정작
+            # 근거 없는 문장을 하나도 지목하지 못했다는 뜻이다. 답변 **안의**
+            # 내용이 틀렸다면 복사해 넣었을 텐데 못 넣었다면, 답변 **밖의**
+            # 무언가(질문의 못 답한 부분)를 보고 반려했을 가능성이 높다.
+            # 로그가 없으면 이 구분을 사후에 할 수 없어 매번 추측하게 된다
+            logger.info(
+                "검증기가 근거 없는 문장을 지목하지 못했다 (unsupported 비어 있음) "
+                "→ 부분 수용 불가. 커버리지 오판일 수 있으니 초안 전문과 함께 확인할 것"
+            )
             return {"grounded": False, "verify_reason": reason}
+        logger.debug("검증기가 지목한 근거 없는 문장 %d건: %s", len(unsupported), unsupported)
 
         pruned = prune_unsupported(draft, unsupported)
+        logger.debug("부분 수용 정제본 (%d자 → %d자) ↓\n%s", len(draft), len(pruned), pruned)
         if pruned == draft:
             # 지목이 초안과 안 맞거나(요약·변형) 너무 많이 잘린다 → 부분 수용 포기
             logger.info("부분 수용 불가: 지목 %d건이 초안과 일치하지 않는다", len(unsupported))

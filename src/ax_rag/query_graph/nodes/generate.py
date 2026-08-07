@@ -75,4 +75,7 @@ def generate(state: QueryState) -> dict:
         len(draft),
         " (반려 사유 반영 재생성)" if _retry_note(state) else "",
     )
+    # 검증 반려를 사후에 진단하려면 **초안 본문**이 있어야 한다. 길이만으로는
+    # "지어냈는가"와 "모른다고 답했는가"를 구분할 수 없어 추측만 하게 된다 (실측 사례)
+    logger.debug("초안 전문 ↓\n%s", draft)
     return {"draft_answer": draft}

@@ -65,6 +65,7 @@
 - prompts.py: 라우터/생성/검증 프롬프트. document delimiter와
   인젝션 방어 지시 포함 (interfaces.md §7)
 - nodes/router.py: ClassifyAndRewrite tool-call, 실패 시 원본 + GENERAL 폴백
+  (→ 8단계에서 ReAct 루프(nodes/agent.py + act.py)로 대체·삭제)
 - query_graph/budget.py: trim_history
 - nodes/generate.py: 원본 질문 + rewritten_query 둘 다 프롬프트에
 - nodes/verify.py: rule_based_verify 1차 → LLM VerifyAnswer 2차, fail-closed
@@ -135,3 +136,17 @@
   (설계 확정, interfaces.md §"적재 원본 관리 계약"). 생성 파일 EXPORT_DIR의
   기회적 정리(shared/exports.py)와 대칭 구조로 `UPLOAD_TTL_HOURS`(기본 24h)
   도입 예정. 미들웨어의 원본 DB 저장이 실동작 확인되면 착수
+
+## 8단계 — ReAct 에이전트 루프 전환
+
+route + 실행 큐(plan-then-execute)를 agent ⇄ act 루프로 교체.
+설계·전환 기록은 `docs/react_migration_plan.md`.
+
+- [x] 검색 파이프라인 함수화 (retrieval.run_search) + 근거 병합 절단
+- [x] 행동 레지스트리(agent_tools) + 판단/실행 노드(agent, act)
+- [x] 추론 근거 스트리밍 (SSE status의 thought·step 선택 필드)
+- [x] 검증 반려 되먹임 재검색 (1회)
+- [x] 레거시 배선·router.py 제거
+- [ ] **L40 A/B 측정** — 승격 기준은 react_migration_plan.md §8 Phase 6
+      (통과율 비순손실 / 재검색 회복 > 0 / 판단 파싱 성공률 ≥ 90% /
+       thought 위생 위반 0 / p50 지연 증가 ≤ 40%)

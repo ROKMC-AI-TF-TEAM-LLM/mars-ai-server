@@ -1,59 +1,52 @@
-"""query_graph 전체 조립 (architecture.md §4) — plan-then-execute.
+"""query_graph 전체 조립 (architecture.md §4) — ReAct 에이전트 루프.
 
-route가 계획(intents)을 확정하면 실행 큐(pending_intents)를 따라 진행한다:
+    START → agent ⇄ act              (상한: MAX_AGENT_STEPS / MAX_SEARCH_CALLS)
+              ├─(근거 있음)──→ generate → verify ─┬ 통과   → finalize → deferred → END
+              │                    ↑              ├ 재검색 → retry_search → agent
+              │                    └──────────────┤ 재시도 → increment_retry
+              │                                   ├ 근거 0 → knowledge_answer → END
+              │                                   └ 소진   → fallback → END
+              ├─(도구 답변·파일 예약만)→ finalize → deferred → END
+              └─(도구도 검색도 없음)──→ direct_answer → deferred → END
 
-route ─(계획이 단독 전용 도구뿐)→ TOOL_NODES[도구] → END        (예: SMALLTALK)
-  └─→ [도구₁ → 도구₂ → ...] → dense_retrieve → bm25_retrieve → fuse → rerank
-        (tool_answers 누적)        └(계획에 DOC_SEARCH 없으면 도구 후 바로 finalize)
-                                → generate → verify
-verify 후 조건부 분기:
-- grounded=True            → finalize (도구 답변 + 문서 답변을 계획 순서로 합성)
-- 실패 + 근거 0건 + 전체검색 → knowledge_answer (LLM 자체 지식, 검증 미거침 + 경고)
-- 실패 + 재시도 여유 있음  → increment_retry → generate 재실행 (도구는 재실행 안 함)
-- 실패 + 재시도 소진       → fallback (도구 답변은 유지, 문서 파트만 대체 답변)
+에이전트는 **근거를 모으는 행동만** 고른다. 답변은 generate가 쓰고 verify가
+검사한다 — 실측으로 균형이 잡힌 두 프롬프트를 루프 안으로 옮기지 않기 위한 분업이다.
 
-도구 추가는 tools.py의 TOOL_NODES 등록만으로 배선된다 (code_guide §12 패턴 B).
-합성은 verify 뒤의 코드 조립만 허용한다 — LLM으로 다듬으면 검증이 닿지 않는
-곳에서 수치가 변형될 수 있다 (fail-closed 원칙).
+도구 추가는 tools.TOOL_NODES + agent_tools.AGENT_TOOLS 등록만으로 배선된다
+(code_guide §12 패턴 C). 합성은 verify 뒤의 코드 조립만 허용한다 — LLM으로
+다듬으면 검증이 닿지 않는 곳에서 수치가 변형될 수 있다 (fail-closed 원칙).
+
+이전 배선(route + 실행 큐, plan-then-execute)은 제거했다. 설계 근거와 전환
+기록은 docs/react_migration_plan.md에 있다.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from langgraph.graph import END, START, StateGraph
 
-from ax_rag.query_graph.nodes.bm25_retrieve import bm25_retrieve
-from ax_rag.query_graph.nodes.dense_retrieve import dense_retrieve
-from ax_rag.query_graph.nodes.fuse import fuse
+from ax_rag.query_graph.agent_tools import ACTION_FINISH
+from ax_rag.query_graph.nodes.act import act, retry_search, run_deferred
+from ax_rag.query_graph.nodes.agent import agent
 from ax_rag.query_graph.nodes.generate import generate
 from ax_rag.query_graph.nodes.knowledge_answer import generate_knowledge_answer
-from ax_rag.query_graph.nodes.rerank import rerank
-from ax_rag.query_graph.nodes.router import route
+from ax_rag.query_graph.nodes.smalltalk import smalltalk
 from ax_rag.query_graph.nodes.verify import verify
 from ax_rag.query_graph.prompts import FALLBACK_ANSWER, FALLBACK_DOMAIN_SCOPED_TEMPLATE
 from ax_rag.query_graph.stages import (
-    NODE_BM25_RETRIEVE,
-    NODE_DENSE_RETRIEVE,
+    NODE_ACT,
+    NODE_AGENT,
+    NODE_DEFERRED,
+    NODE_DIRECT_ANSWER,
     NODE_FALLBACK,
     NODE_FINALIZE,
-    NODE_FUSE,
     NODE_GENERATE,
     NODE_INCREMENT_RETRY,
     NODE_KNOWLEDGE_ANSWER,
-    NODE_RERANK,
-    NODE_ROUTE,
+    NODE_RETRY_SEARCH,
     NODE_VERIFY,
 )
 from ax_rag.query_graph.state import QueryState
-from ax_rag.query_graph.tools import (
-    DOC_SEARCH,
-    POST_SEARCH_TOOLS,
-    TERMINAL_ONLY_TOOLS,
-    TOOL_NODES,
-    plan_of,
-    resolve_pending,
-)
+from ax_rag.query_graph.tools import DOC_SEARCH
 from ax_rag.shared.config import DOMAIN_LABELS, get_config
 from ax_rag.shared.logging_setup import get_logger
 
@@ -61,7 +54,11 @@ logger = get_logger(__name__)
 
 
 def _compose_final(state: QueryState, doc_part: str) -> str:
-    """도구 답변과 문서 파트를 계획(intents) 순서로 조립한다 (코드 조립만, LLM 금지)."""
+    """도구 답변과 문서 파트를 실행 순서(intents)로 조립한다 (코드 조립만, LLM 금지).
+
+    intents는 act 노드가 실행한 경로를 순서대로 기록한 목록이다
+    (검색을 하면 DOC_SEARCH, 도구를 쓰면 그 intent가 한 번씩 들어간다).
+    """
     tool_answers = {
         item.get("intent"): str(item.get("answer") or "")
         for item in (state.get("tool_answers") or [])
@@ -76,15 +73,9 @@ def _compose_final(state: QueryState, doc_part: str) -> str:
 
 
 def finalize(state: QueryState) -> dict:
-    """검증 통과한 초안(+도구 답변)을 계획 순서로 합성해 확정한다.
-
-    실행 큐에서 DOC_SEARCH를 지워, 남은 후처리 도구(POST_SEARCH_TOOLS)가
-    after_finalize 분기로 이어질 수 있게 한다.
-    """
-    pending = [n for n in (state.get("pending_intents") or []) if n != DOC_SEARCH]
+    """검증 통과한 초안(+도구 답변)을 실행 순서로 합성해 확정한다."""
     return {
         "final_answer": _compose_final(state, state.get("draft_answer") or ""),
-        "pending_intents": pending,
         "answer_mode": "grounded",
     }
 
@@ -179,104 +170,78 @@ def knowledge_answer(state: QueryState) -> dict:
     return {"final_answer": _compose_final(state, answer), "answer_mode": "knowledge"}
 
 
-def _make_post_tool_step(
-    intent_name: str, tool_node: Callable[[dict], dict]
-) -> Callable[[dict], dict]:
-    """후처리 도구 노드 래퍼: 확정된 final_answer 뒤에 도구 답변을 이어 붙인다.
+# ── ReAct 루프 분기 (AGENT_MODE=true) ─────────────────────────────────────
 
-    검색 파이프라인 뒤(finalize 후)에 실행되므로 도구는 state.final_answer
-    (방금 검증·합성된 답변)를 입력으로 쓸 수 있다. 단독 실행(계획이 후처리
-    도구뿐)이면 final_answer가 아직 없어 도구 답변만 확정된다.
-    합성은 코드 조립만 — verify 뒤 LLM 가공 금지 원칙 유지.
+
+def _finish_target(state: QueryState) -> str:
+    """루프 종료 후 갈 곳을 고른다.
+
+    - 근거가 있거나 검색을 시도했으면 → generate (검색 0건이면 빈 초안 →
+      verify fail-closed → knowledge_answer/fallback으로 이어진다. 이 경로를
+      유지해야 "근거 0건" 판정이 종전대로 작동한다)
+    - 검색은 없었지만 도구 답변·예약이 있으면 → finalize (도구 산출물만 확정)
+    - 아무것도 없으면 → direct_answer (인사·잡담·자기소개)
     """
-
-    def post_tool_step(state: QueryState) -> dict:
-        delta = tool_node(state) or {}
-        answer = str(delta.get("final_answer") or "")
-        base = state.get("final_answer") or _compose_final(state, "")
-        return {
-            "final_answer": f"{base}\n\n{answer}" if base and answer else (answer or base),
-            "pending_intents": [
-                name for name in (state.get("pending_intents") or []) if name != intent_name
-            ],
-            # 도구가 만든 파일 정보는 SSE file 이벤트 재료로 누적 전달한다
-            "generated_files": [
-                *(state.get("generated_files") or []),
-                *(delta.get("generated_files") or []),
-            ],
-        }
-
-    return post_tool_step
-
-
-def _make_tool_step(intent_name: str, tool_node: Callable[[dict], dict]) -> Callable[[dict], dict]:
-    """도구 노드를 계획 실행 단계로 감싼다.
-
-    도구 함수의 기존 계약({"final_answer", ...} 반환)은 그대로 두고, 답변을
-    tool_answers에 누적하며 실행 큐에서 자신을 지운다. 도구별 특수 코드 없이
-    레지스트리 등록만으로 복합 계획에 편입된다.
-    """
-
-    def tool_step(state: QueryState) -> dict:
-        delta = tool_node(state) or {}
-        answer = str(delta.get("final_answer") or "")
-        return {
-            "tool_answers": [
-                *(state.get("tool_answers") or []),
-                {"intent": intent_name, "answer": answer},
-            ],
-            "pending_intents": [
-                name for name in (state.get("pending_intents") or []) if name != intent_name
-            ],
-            # 도구가 만든 파일 정보는 SSE file 이벤트 재료로 누적 전달한다
-            "generated_files": [
-                *(state.get("generated_files") or []),
-                *(delta.get("generated_files") or []),
-            ],
-        }
-
-    return tool_step
-
-
-def next_step(state: QueryState) -> str:
-    """실행 큐의 다음 단계: 도구 노드 | dense_retrieve(DOC_SEARCH) | finalize(큐 소진)."""
-    pending = resolve_pending(state)
-    if not pending:
+    if (state.get("retrieved_chunks") or []) or (state.get("search_calls") or 0):
+        return NODE_GENERATE
+    if (state.get("tool_answers") or []) or (state.get("deferred_actions") or []):
         return NODE_FINALIZE
-    if pending[0] == DOC_SEARCH:
-        return NODE_DENSE_RETRIEVE
-    return pending[0]
+    return NODE_DIRECT_ANSWER
 
 
-def after_route(state: QueryState) -> str:
-    """route 결과 분기: 단독 전용 도구는 종착 노드로, 그 외는 실행 큐를 따른다."""
-    plan = plan_of(state)
-    if len(plan) == 1 and plan[0] in TERMINAL_ONLY_TOOLS:
-        return plan[0]
-    return next_step(state)
+def after_agent(state: QueryState) -> str:
+    """agent 판단 후 분기: 행동을 실행하거나(act) 루프를 끝낸다."""
+    if str(state.get("next_action") or ACTION_FINISH) == ACTION_FINISH:
+        return _finish_target(state)
+    return NODE_ACT
 
 
-def after_finalize(state: QueryState) -> str:
-    """finalize·후처리 도구 완료 후 분기: 남은 후처리 도구 실행 또는 종료.
+def after_act(state: QueryState) -> str:
+    """act 실행 후 분기: 다시 판단하거나(agent) 루프를 끝낸다.
 
-    fallback 경로는 이 분기를 타지 않는다 (검증 실패 답변은 후처리하지 않음).
+    라운드 상한을 다 썼으면 에이전트에게 되묻지 않고 끝낸다 — 물어봐야 답은
+    정해져 있고 LLM 호출만 한 번 더 나간다. 검색 상한은 여기서 보지 않는다:
+    검색을 다 썼어도 남은 라운드로 다른 도구를 고를 수 있고, 검색 요청이
+    들어오면 agent 노드가 종료로 바꾼다.
     """
-    pending = state.get("pending_intents") or []
-    if pending and pending[0] in POST_SEARCH_TOOLS:
-        return pending[0]
-    return END
+    if state.get("force_finish"):
+        return _finish_target(state)
+    if (state.get("agent_steps") or 0) >= get_config().MAX_AGENT_STEPS:
+        return _finish_target(state)
+    return NODE_AGENT
+
+
+def _can_retry_search(state: QueryState) -> bool:
+    """검증 반려를 에이전트에게 되돌려 재검색할 수 있는 상황인지 판정한다.
+
+    한 번만 허용한다 (verify_feedback_used). 상한을 이미 썼으면 되돌려도
+    에이전트가 검색을 못 하므로 의미가 없다.
+
+    에이전트가 방금 같은 검색어를 반복해 중복 차단에 걸렸다면
+    (search_ideas_exhausted) 되돌려도 같은 검색어가 또 나온다 — 이 경우도
+    되먹임을 걸지 않는다 (실측: 3라운드 내내 동일 검색어 반복).
+    """
+    config = get_config()
+    if not config.AGENT_VERIFY_FEEDBACK:
+        return False
+    if state.get("verify_feedback_used") or state.get("search_ideas_exhausted"):
+        return False
+    return (state.get("search_calls") or 0) < config.MAX_SEARCH_CALLS and (
+        state.get("agent_steps") or 0
+    ) < config.MAX_AGENT_STEPS
 
 
 def after_verify(state: QueryState) -> str:
-    """verify 결과에 따른 분기: finalize / knowledge_answer / increment_retry / fallback.
+    """verify 결과 분기: finalize / retry_search / knowledge_answer / increment_retry / fallback.
 
-    지식 답변 판정을 **재시도보다 앞에** 둔다. 근거가 0건이면 generate가 빈
-    초안을 내고 verify가 즉시 떨어뜨리므로, 재생성해도 결과가 같다 (실측 로그:
-    빈 초안 → 검증 실패 → 재생성 → 또 빈 초안 → fallback). 앞에 두면 무의미한
-    재시도가 사라져 응답이 그만큼 빨라진다.
+    재검색을 **knowledge_answer보다 앞에** 둔다. 문서로 답할 기회를 다 쓰기
+    전에 검증 없는 지식 답변으로 내려가면, 재검색으로 찾을 수 있었던 근거를
+    버리게 된다. 그 외 순서와 fail-closed 원칙은 기존 분기와 같다.
     """
     if state.get("grounded"):
         return NODE_FINALIZE
+    if _can_retry_search(state):
+        return NODE_RETRY_SEARCH
     if _can_answer_from_knowledge(state):
         return NODE_KNOWLEDGE_ANSWER
     if (state.get("retry_count") or 0) < get_config().MAX_VERIFY_RETRY:
@@ -284,76 +249,62 @@ def after_verify(state: QueryState) -> str:
     return NODE_FALLBACK
 
 
+def direct_answer(state: QueryState) -> dict:
+    """도구도 검색도 쓰지 않은 질문에 답한다 (인사·잡담·자기소개).
+
+    smalltalk 노드를 그대로 쓴다 — 정체성 프롬프트와 grounded=False 계약이
+    이미 그 노드에 있다. ReAct에서는 "잡담 도구를 실행"하는 대신 에이전트가
+    아무 도구도 쓰지 않고 끝낸 경우가 이 경로다.
+    """
+    return smalltalk(state)
+
+
 def _build_graph() -> StateGraph:
+    """ReAct 루프 배선."""
     builder = StateGraph(QueryState)
-    builder.add_node(NODE_ROUTE, route)
-    builder.add_node(NODE_DENSE_RETRIEVE, dense_retrieve)
-    builder.add_node(NODE_BM25_RETRIEVE, bm25_retrieve)
-    builder.add_node(NODE_FUSE, fuse)
-    builder.add_node(NODE_RERANK, rerank)
+    builder.add_node(NODE_AGENT, agent)
+    builder.add_node(NODE_ACT, act)
     builder.add_node(NODE_GENERATE, generate)
     builder.add_node(NODE_VERIFY, verify)
+    builder.add_node(NODE_RETRY_SEARCH, retry_search)
     builder.add_node(NODE_FINALIZE, finalize)
     builder.add_node(NODE_INCREMENT_RETRY, increment_retry)
     builder.add_node(NODE_FALLBACK, fallback)
     builder.add_node(NODE_KNOWLEDGE_ANSWER, knowledge_answer)
+    builder.add_node(NODE_DIRECT_ANSWER, direct_answer)
+    builder.add_node(NODE_DEFERRED, run_deferred)
 
-    # 도구 레지스트리 자동 배선: 노드 이름 = intent 값.
-    # - 단독 전용(TERMINAL_ONLY): 종착 노드 (→ END)
-    # - 후처리(POST_SEARCH): finalize 뒤에 실행, 확정 답변에 이어 붙임
-    # - 그 외(전처리): 실행 큐를 따라 검색 파이프라인 앞에서 순차 실행
-    pre_tools = [
-        name
-        for name in TOOL_NODES
-        if name not in TERMINAL_ONLY_TOOLS and name not in POST_SEARCH_TOOLS
-    ]
-    post_tools = [name for name in TOOL_NODES if name in POST_SEARCH_TOOLS]
-    step_targets = {
-        **{name: name for name in pre_tools},
-        **{name: name for name in post_tools},
-        NODE_DENSE_RETRIEVE: NODE_DENSE_RETRIEVE,
+    loop_targets = {
+        NODE_ACT: NODE_ACT,
+        NODE_AGENT: NODE_AGENT,
+        NODE_GENERATE: NODE_GENERATE,
         NODE_FINALIZE: NODE_FINALIZE,
+        NODE_DIRECT_ANSWER: NODE_DIRECT_ANSWER,
     }
-    post_targets = {**{name: name for name in post_tools}, END: END}
-    for intent_name, tool_node in TOOL_NODES.items():
-        if intent_name in TERMINAL_ONLY_TOOLS:
-            builder.add_node(intent_name, tool_node)
-            builder.add_edge(intent_name, END)
-        elif intent_name in POST_SEARCH_TOOLS:
-            builder.add_node(intent_name, _make_post_tool_step(intent_name, tool_node))
-            builder.add_conditional_edges(intent_name, after_finalize, post_targets)
-        else:
-            builder.add_node(intent_name, _make_tool_step(intent_name, tool_node))
-            builder.add_conditional_edges(intent_name, next_step, step_targets)
-
-    builder.add_edge(START, NODE_ROUTE)
-    builder.add_conditional_edges(
-        NODE_ROUTE,
-        after_route,
-        {**step_targets, **{name: name for name in TERMINAL_ONLY_TOOLS if name in TOOL_NODES}},
-    )
-    builder.add_edge(NODE_DENSE_RETRIEVE, NODE_BM25_RETRIEVE)
-    builder.add_edge(NODE_BM25_RETRIEVE, NODE_FUSE)
-    builder.add_edge(NODE_FUSE, NODE_RERANK)
-    builder.add_edge(NODE_RERANK, NODE_GENERATE)
+    builder.add_edge(START, NODE_AGENT)
+    builder.add_conditional_edges(NODE_AGENT, after_agent, loop_targets)
+    builder.add_conditional_edges(NODE_ACT, after_act, loop_targets)
     builder.add_edge(NODE_GENERATE, NODE_VERIFY)
     builder.add_conditional_edges(
         NODE_VERIFY,
         after_verify,
         {
             NODE_FINALIZE: NODE_FINALIZE,
+            NODE_RETRY_SEARCH: NODE_RETRY_SEARCH,
+            NODE_KNOWLEDGE_ANSWER: NODE_KNOWLEDGE_ANSWER,
             NODE_INCREMENT_RETRY: NODE_INCREMENT_RETRY,
             NODE_FALLBACK: NODE_FALLBACK,
-            NODE_KNOWLEDGE_ANSWER: NODE_KNOWLEDGE_ANSWER,
         },
     )
+    builder.add_edge(NODE_RETRY_SEARCH, NODE_AGENT)
     builder.add_edge(NODE_INCREMENT_RETRY, NODE_GENERATE)
-    # finalize 후 남은 후처리 도구가 있으면 실행, 없으면 종료.
-    # fallback은 후처리 없이 바로 종료 — 검증 실패 답변은 파일 등으로 후처리하지 않는다
-    builder.add_conditional_edges(NODE_FINALIZE, after_finalize, post_targets)
+    # 지연 도구(파일 저장 등)는 확정된 답변 뒤에만 실행된다.
+    # fallback·knowledge_answer는 이 경로를 타지 않는다 — 검증을 통과하지
+    # 못한 답변을 파일로 만들지 않는다 (fail-closed)
+    builder.add_edge(NODE_FINALIZE, NODE_DEFERRED)
+    builder.add_edge(NODE_DIRECT_ANSWER, NODE_DEFERRED)
+    builder.add_edge(NODE_DEFERRED, END)
     builder.add_edge(NODE_FALLBACK, END)
-    # 지식 답변도 fallback과 같이 후처리 없이 종료한다 — 검증을 거치지 않은
-    # 답변을 파일 등으로 후처리하지 않는다
     builder.add_edge(NODE_KNOWLEDGE_ANSWER, END)
     return builder
 

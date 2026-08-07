@@ -47,15 +47,13 @@ LangGraph가 반환 dict를 기존 state에 **병합**해서 다음 노드에 �
 | 노드 | 읽는 키 | 쓰는 키 (예시 값) |
 |---|---|---|
 | (호출자) | - | `question="그거 얼마나 쓸 수 있어?"`, `user_department="HR_TEAM"`, `requested_domain=""`, `conversation_history=[...]`, (강제 시 `intent`) |
-| route | question, conversation_history, intent(강제) | `rewritten_query="육아휴직 사용 가능 기간"`, `intents=["DOC_SEARCH"]`(계획), `pending_intents=[...]`(실행 큐), `retry_count=0` |
-| (도구 노드) | question, pending_intents | `tool_answers=[{intent, answer}]` 누적, 큐에서 자신 제거 (복합 계획일 때만 경유) |
-| dense_retrieve | rewritten_query, requested_domain, user_department | `dense_candidates=[{chunk_id, text, parent_id, source_doc, dense_score, ...} × SEARCH_TOP_K]` |
-| bm25_retrieve | rewritten_query, requested_domain, user_department | `bm25_candidates=[... × ≤SEARCH_TOP_K]` (ACL 후처리 완료분) |
-| fuse | dense_candidates, bm25_candidates | `retrieved_candidates=[... × ≤RERANK_TOP_K]` (rrf_score 추가) |
-| rerank | retrieved_candidates, rewritten_query | `retrieved_chunks=[{text=부모본문, source_doc, rerank_score} × ≤5]` |
+| agent | question, conversation_history, agent_scratchpad, intent(강제) | `next_action="search_documents"`, `next_action_args={"query": "육아휴직 사용 가능 기간"}`, `agent_thought="근거를 찾는다"`, `agent_steps=1` |
+| act (검색) | next_action_args, requested_domain, user_department | `retrieved_chunks=[{text=부모본문, source_doc, rerank_score} × ≤RERANK_TOP_N]`, `search_calls=1`, `agent_scratchpad+=[관측]`, `intents+=["DOC_SEARCH"]` |
+| act (도구) | question, next_action | `tool_answers=[{intent, answer}]` 누적, `intents+=[intent]` (지연 도구는 `deferred_actions`에 예약만) |
 | generate | retrieved_chunks, question, rewritten_query, tool_answers, history | `draft_answer="육아휴직은 자녀 1명당 최대 1년..."` |
 | verify | draft_answer, retrieved_chunks, question, tool_answers | `grounded=True/False`, `verify_reason="..."` |
-| finalize / fallback | draft_answer, intents, tool_answers | `final_answer` = 도구 답변 + 문서 답변을 계획 순서로 합성 |
+| finalize / fallback | draft_answer, intents, tool_answers | `final_answer` = 도구 답변 + 문서 답변을 실행 순서로 합성 |
+| deferred | final_answer, deferred_actions | 예약된 파일을 만들고 `final_answer` 뒤에 이어 붙임 (`generated_files` 누적) |
 
 `IndexState`(indexer_graph/state.py)도 같은 원리다:
 호출자가 `text/source_doc/domain/owning_department/visibility/sections`를 넣고,
@@ -302,74 +300,80 @@ rebuild_bm25()                                          # ④ flush 후 BM25 전
 
 ```mermaid
 flowchart TB
-    START([START]) --> route["route<br/>재작성 + 계획(intents) 수립<br/><i>결정적 매처 선판정, tool 필드로 강제 가능</i>"]
+    START([START]) --> agent["agent<br/>다음 행동 1개 + 판단 근거(thought)<br/><i>강제 지정·결정적 매처는 LLM 없이 확정</i>"]
 
-    route -- "계획=[SMALLTALK] 단독" --> smalltalk["SMALLTALK 노드<br/>잡담·자기소개 응답<br/><i>검색·검증 생략, sources 없음, 합성 불가</i>"]
-    route -- "계획 선두가 도구" --> tool["도구 노드 (DISCHARGE_DAYS 등)<br/>tool_answers에 답변 누적<br/><i>결정적 코드, 실행 큐에서 자신 제거</i>"]
-    route -- "계획 선두 DOC_SEARCH" --> dense["dense_retrieve<br/>벡터 검색 SEARCH_TOP_K<br/><i>임베딩 :8001 → Milvus, ACL은 DB 필터</i>"]
+    agent -- "행동 선택" --> act["act<br/>검색 또는 도구 실행<br/><i>압축 관측을 스크래치패드에 누적</i>"]
+    act -- "라운드 남음" --> agent
+    act -- "상한 소진·단독 확정" --> finish{{"루프 종료"}}
+    agent -- "finish" --> finish
 
-    tool -- "큐에 DOC_SEARCH 남음" --> dense
-    tool -- "큐 소진 (도구 단독)" --> finalize
+    finish -- "근거 있음·검색함" --> generate["generate<br/>근거 기반 초안<br/><i>&lt;document&gt; 격리 + 질문 2벌<br/>도구 처리분은 답하지 않음</i>"]
+    finish -- "도구 답변·파일 예약만" --> finalize
+    finish -- "도구도 검색도 없음" --> direct["direct_answer<br/>잡담·자기소개 (smalltalk 노드)<br/><i>검증 생략, sources 없음</i>"]
 
-    dense --> bm25["bm25_retrieve<br/>키워드 검색 SEARCH_TOP_K<br/><i>filter_by_acl 후처리 필수</i>"]
-    bm25 --> fuse["fuse<br/>RRF 융합 1/(60+순위)<br/><i>순수 연산, 상위 RERANK_TOP_K</i>"]
-    fuse --> rerank["rerank<br/>top5 확정 → 부모 치환<br/><i>리랭커 :8002</i>"]
-    rerank --> generate["generate<br/>근거 기반 초안<br/><i>&lt;document&gt; 격리 + 질문 2벌<br/>도구 처리분은 답하지 않음</i>"]
-    generate --> verify["verify<br/>LLM 근거 검증<br/><i>판정 불가 = 탈락 (fail-closed)<br/>도구 처리분은 판정 제외</i>"]
+    generate --> verify["verify<br/>LLM 근거 검증<br/><i>판정 불가 = 탈락 (fail-closed)<br/>판정 범위는 답변에 적힌 내용뿐</i>"]
 
-    verify -- "grounded=True" --> finalize["finalize<br/>도구+문서 답변을<br/>계획 순서로 코드 합성"]
+    verify -- "grounded=True" --> finalize["finalize<br/>도구+문서 답변을<br/>실행 순서로 코드 합성"]
+    verify -- "실패·재검색 여유" --> research["retry_search<br/>반려 사유를 관측으로<br/>에이전트에 되돌림 (1회)"]
     verify -- "실패·재시도 여유" --> retry["increment_retry<br/>재시도 +1 (MAX=1)"]
-    verify -- "재시도 소진" --> fallback["fallback<br/>문서 파트만 대체 답변<br/>(도구 답변은 유지)"]
+    verify -- "근거 0건·전체검색" --> knowledge["knowledge_answer<br/>LLM 자체 지식<br/><i>검증 미거침 + notice 경고</i>"]
+    verify -- "소진" --> fallback["fallback<br/>문서 파트만 대체 답변<br/>(도구 답변은 유지)"]
+    research -. "다시 판단" .-> agent
     retry -. "generate 재실행" .-> generate
 
-    smalltalk --> DONE
-    finalize --> DONE
-    fallback --> DONE([END → main.py가 SSE 분할 전송])
+    finalize --> deferred["deferred<br/>예약된 파일 생성 실행<br/><i>검증 통과분만</i>"]
+    direct --> deferred
+    deferred --> DONE([END → main.py가 SSE 분할 전송])
+    knowledge --> DONE
+    fallback --> DONE
 
-    style route fill:#f9e9eb,stroke:#b5122b
-    style smalltalk fill:#f9e9eb,stroke:#b5122b
+    style agent fill:#f9e9eb,stroke:#b5122b
+    style direct fill:#f9e9eb,stroke:#b5122b
     style generate fill:#f9e9eb,stroke:#b5122b
     style verify fill:#f9e9eb,stroke:#b5122b
-    style dense fill:#eaf0f5,stroke:#38678c
-    style bm25 fill:#eaf0f5,stroke:#38678c
-    style rerank fill:#eaf0f5,stroke:#38678c
+    style knowledge fill:#f9e9eb,stroke:#b5122b
+    style act fill:#eaf0f5,stroke:#38678c
 ```
 
-색 구분: 빨강 = LLM 호출(:8000), 파랑 = 검색·저장소, 무색 = 제어·순수 연산·도구.
-복합 질문(plan-then-execute)이면 도구들을 계획 순서로 먼저 실행해 답변을
-누적한 뒤 검색 파이프라인으로 이어지고, finalize가 계획 순서로 합성한다.
+색 구분: 빨강 = LLM 호출(:8000), 파랑 = 검색·저장소, 무색 = 제어·순수 연산.
 
-### 4-1. route (nodes/router.py)
+핵심은 **에이전트가 답변을 쓰지 않는다**는 점이다. 근거를 모으는 행동만
+고르고, 답변은 generate가 쓰고 verify가 검사한다. 그래서 fail-closed 계약이
+루프 도입 전과 똑같이 유지된다.
 
-한 번의 구조화 호출로 재작성 + 처리 계획을 동시에 만든다:
+### 4-1. agent / act (nodes/agent.py, nodes/act.py)
 
-```python
-class ClassifyAndRewrite(BaseModel):
-    rewritten_query: str   # "그거 얼마나 써?" → "육아휴직 사용 가능 기간"
-    intents: list[str]     # 처리 계획: ["DOC_SEARCH"] | ["DISCHARGE_DAYS", "DOC_SEARCH"] 등
-    intent: str            # (7B 허용 오차) 단수형 응답 수용용 — intents가 비면 사용
-```
+**agent** — 한 번의 구조화 호출(`AgentAction`)로 `thought`(판단 근거) +
+`action`(행동) + 인자를 함께 받는다. thought를 첫 필드로 두어 모델이 근거를
+먼저 쓰게 하고(선택 품질 상승), 그 문장은 SSE로 사용자에게 흘러간다.
 
-동작 순서 (우선순위):
-1. **강제 지정**: 요청 tool 필드가 state["intent"]를 선설정하면 계획을
-   그 경로 하나로 고정하고 재작성만 수행 (엄격 — 잡담 예외 없음).
-2. **결정적 매처**: 질문이 30자 이하이고 TOOL_MATCHERS에 걸리면 LLM 없이
-   해당 도구 단독 계획으로 직행 (LLM 0회). 긴 질문은 복합일 수 있으므로
-   LLM 분류를 함께 태우되, 매처가 잡은 도구는 계획에 보장 포함한다.
-3. **LLM 분류**: `trim_history()` 절삭(1,500토큰) → `call_with_schema()`(§4-8).
-4. **계획 정규화** (`_normalize_plan`): 미지 값 제거, 중복 제거(순서 유지),
-   최대 3개 절단. SMALLTALK 등 단독 전용 도구(TERMINAL_ONLY_TOOLS)는 다른
-   경로와 섞이면 제거. 문자열 intents·단수형 intent 응답도 보정 수용,
-   자리표시(`<...>`) 재작성은 원본 질문으로 대체 (7B 허용 오차).
-5. **어떤 실패든**(tool-call 불발, 예외) `{원본 질문, [매처 도구..., DOC_SEARCH]}`
-   폴백을 반환하고 파이프라인은 계속 간다.
+LLM에 묻기 **전에** 코드가 결정하는 것들:
 
-반환: `intents`(계획, 합성 순서) + `pending_intents`(실행 큐 — 도구 먼저,
-DOC_SEARCH 마지막) + `intent`(대표값) + `retry_count: 0`.
+1. **강제 지정** — 요청 `tool` 필드가 있으면 그 행동으로 직행 (LLM 0회)
+2. **결정적 매처** — `is_discharge_request`/`is_hwp_export_request`가 잡으면
+   LLM 없이 확정. 짧고(30자 이하) 검색 신호가 없으면 그대로 종결까지 한다
+3. **상한 소진** — `MAX_AGENT_STEPS`를 다 썼으면 묻지 않고 `finish`
+4. **구조화 호출 실패** — 1라운드에 한해 **원본 질문으로 검색을 강제**한다.
+   에이전트가 완전히 실패해도 이전 구조의 DOC_SEARCH 경로와 같게 동작한다
 
-### 4-2. smalltalk (nodes/smalltalk.py)
+**act** — 고른 행동을 실행하고 **압축된 관측**을 스크래치패드에 쌓는다.
 
-라우터가 SMALLTALK으로 분류한 입력("안녕", "내 이름은 원석이야")만 온다.
+- 검색은 `retrieval.run_search()` 호출. **검색 범위(ACL·도메인)는 상태에서만
+  읽는다** — LLM이 준 인자는 검색어와 초안 본문뿐이고, 검색어조차
+  `strip_file_phrases`로 파일 요청 표현을 걷어낸 뒤 쓴다
+- 누적 근거는 `merge_chunks`가 리랭크 점수로 재정렬해 `RERANK_TOP_N`개로
+  **절단**한다 → 몇 번을 검색해도 generate 컨텍스트가 늘지 않는다
+- 지연 도구(파일 저장)는 실행하지 않고 **예약만** 한다
+- 같은 검색어가 반복되면 실행하지 않고 루프를 끝낸다 (결과가 같으므로)
+
+관측은 요약본(문서명 + 150자 발췌 × 3, 최대 400자)이고 `<observation>`
+delimiter로 감싼다 — 인젝션 방어면이 generate 프롬프트 하나에서 둘로 늘었다.
+
+### 4-2. smalltalk / direct_answer (nodes/smalltalk.py)
+
+에이전트가 **도구도 검색도 쓰지 않고 끝낸** 질문이 온다
+("안녕", "내 이름은 원석이야", "나 요즘 힘들어").
+graph.direct_answer가 이 노드를 그대로 호출한다.
 
 - 검색/검증을 전부 건너뛰고 가벼운 시스템 프롬프트로 1~2문장 응답.
 - 반환: `{"final_answer": ..., "grounded": False, "retrieved_chunks": []}` —
@@ -554,18 +558,28 @@ if not retrieved_chunks:       return False, "검증할 근거 청크가 없다"
 
 ```python
 def after_verify(state) -> str:
-    if state.get("grounded"):                                    return "finalize"
-    if state.get("retry_count", 0) < get_config().MAX_VERIFY_RETRY: return "increment_retry"
+    if state.get("grounded"):              return "finalize"
+    if _can_retry_search(state):           return "retry_search"      # 재검색이 먼저
+    if _can_answer_from_knowledge(state):  return "knowledge_answer"
+    if retry_count < MAX_VERIFY_RETRY:     return "increment_retry"
     return "fallback"
 ```
 
-- `finalize`: 도구 답변(tool_answers)과 draft를 **계획(intents) 순서로 코드
+순서가 곧 정책이다:
+
+- `finalize`: 도구 답변(tool_answers)과 draft를 **실행 순서(intents)로 코드
   조립**해 final_answer로 확정. verify 뒤에는 LLM 가공 금지 — 검증이 닿지
   않는 곳에서 수치가 변형되면 fail-closed가 무의미해진다.
+  그 뒤 `deferred`가 예약된 파일 생성을 실행한다
+- `retry_search`: 반려 사유를 관측으로 실어 **에이전트에게 되돌린다**(1회).
+  이전 구조에서는 같은 청크로 다시 쓰는 것뿐이라 "문서에 없다"는 사유가
+  삭제로는 해소되지 않아 루프가 수렴하지 못했다
+- `knowledge_answer`: 근거 0건 + 도메인 미지정일 때만. **재검색보다 뒤에** 둔다 —
+  문서로 답할 기회를 남겨 둔 채 검증 없는 경로로 내려가지 않는다
 - `increment_retry`: 카운터 +1 후 **generate부터 재실행** (검색·도구는 다시
-  안 한다 — 근거는 같고 생성만 다시). MAX_VERIFY_RETRY=1이므로 총 2회 생성.
-- `fallback`: 문서 파트만 `FALLBACK_ANSWER`("근거를 찾지 못했습니다…")로
-  바꿔 합성. 도구 답변(결정적 코드 산출물)은 유지된다. fail-closed의 종착지다.
+  안 한다). MAX_VERIFY_RETRY=1이므로 총 2회 생성
+- `fallback`: 문서 파트만 `FALLBACK_ANSWER`로 바꿔 합성. 도구 답변(결정적
+  코드 산출물)은 유지된다. fail-closed의 종착지이며 **파일 생성을 타지 않는다**
 
 ### 4-12. budget.py — 컨텍스트 예산 지킴이
 
@@ -797,7 +811,7 @@ args = call_with_schema(messages, NewSchema, llm_getter=get_llm)  # 3단 폴백 
 ```
 
 수정 범위: 해당 노드 파일 + 프롬프트. 그래프·상태 구조는 그대로.
-ClassifyAndRewrite / VerifyAnswer가 이 패턴의 기존 예다.
+AgentAction / VerifyAnswer가 이 패턴의 기존 예다.
 
 ### 패턴 B. 새 처리 경로 추가 (라우터 분기 확장) ← 대부분의 "기능 추가"
 
@@ -819,36 +833,37 @@ smalltalk이 이 패턴의 기존 예다. **도구 레지스트리(`query_graph/
    항목(프롬프트), 강제 선택 허용값(요청 tool 필드), `/capabilities` 응답이
    전부 자동 반영된다. 선택 레지스트리 3종:
    - `TOOL_MATCHERS` — 결정적으로 감지 가능하면 코드 매처 등록 (LLM 생략)
-   - `TERMINAL_ONLY_TOOLS` — 복합 계획에 섞이면 안 되는 단독 전용 도구
    - `TOOL_STATUS_MESSAGES` — 실행 중 프론트에 보여줄 진행 문구
 3. **주변 정리** — 유닛 테스트(가짜 LLM), interfaces.md §5·§6 허용값 갱신,
    필요 시 main.py `_status_after_node` 진행 문구
 
-### 패턴 C. 에이전트식 tool-use 루프 (LLM이 도구를 골라 반복 호출)
+### 패턴 C. 에이전트식 tool-use 루프 — **현행 구조**
 
-LLM이 스스로 "계산기를 써야겠다", "인사 DB를 조회해야겠다"를 판단해
-여러 도구를 연쇄 호출하는 ReAct 구조. LangGraph 표준 패턴은
-**agent 노드 ↔ tool 실행 노드의 루프**다:
+LLM이 스스로 "검색을 더 해야겠다", "파일로 저장해야겠다"를 판단해 도구를
+연쇄 호출하는 ReAct 구조. **이제 이 프로젝트의 기본 배선이다**
+(architecture.md §4-A, 설계 근거는 `docs/react_migration_plan.md`).
 
-```python
-def agent(state):           # LLM이 tool_calls 또는 최종 답을 반환
-def run_tools(state):       # tool_calls를 실제 실행하고 결과를 state에 추가
+구현 위치: `nodes/agent.py`(판단) ↔ `nodes/act.py`(실행),
+행동 레지스트리는 `agent_tools.py`, 배선은 `graph._build_graph()`.
 
-builder.add_conditional_edges("agent",
-    lambda s: "run_tools" if s.get("pending_tool_calls") else "verify")
-builder.add_edge("run_tools", "agent")   # 결과를 들고 다시 판단
-```
+도입하며 지킨 것 — **새 행동을 추가할 때도 이 다섯은 그대로 지킬 것**:
 
-이 패턴을 도입할 때 이 프로젝트에서 반드시 지켜야 할 것:
+- **루프 상한**: `MAX_AGENT_STEPS`(라운드) + `MAX_SEARCH_CALLS`(검색) 이중 상한.
+  소진 시 LLM에 묻지 않고 종료한다. 동일 검색어 반복도 코드로 차단
+- **도구도 에어갭**: 행동이 호출하는 대상은 localhost 서비스와 로컬 자원뿐.
+  검색 범위(ACL·도메인)는 **상태에서만** 읽고 LLM 인자로 받지 않는다
+- **verify는 그대로 통과**: 답변 작성은 여전히 generate가, 검증은 verify가 한다.
+  에이전트의 권한은 **근거 수집과 액션 실행까지**이며 답변을 쓰지 않는다.
+  관측(observation)은 `<observation>` delimiter로 격리해 인젝션 방어를 유지한다
+- **감사 로그 확장**: `tool_calls`(행동·인자·thought)와 `agent_steps`를 남긴다
+- **토큰 예산 재계산**: architecture.md §7에 agent 호출 몫과 **예산 불변식**
+  (검색을 몇 번 하든 근거는 `RERANK_TOP_N`개로 절단)을 명시했다
 
-- **루프 상한**: retry_count처럼 도구 호출 횟수 상한을 두고 소진 시 fallback
-  (무한 루프 = 16K 토큰 예산 파괴)
-- **도구도 에어갭**: 도구가 호출하는 대상은 localhost 서비스나 로컬 자원만
-- **verify는 그대로 통과**: 도구 결과를 근거로 쓴 답변도 fail-closed 검증을
-  거친다. 도구 결과를 `<document>`처럼 delimiter로 격리해 인젝션 방어 유지
-- **감사 로그 확장**: 어떤 도구를 어떤 인자로 호출했는지 기록
-- **토큰 예산 재계산**: 도구 결과가 컨텍스트에 쌓이므로 architecture.md §7
-  표에 도구 결과 몫을 추가
+7B의 구조화 출력 안정성 문제는 `response_format=json_schema`(문법 강제)가
+주 경로가 되면서 크게 완화됐다 (tool_fallback.py 모듈 docstring 참조).
+그래도 **결정적 폴백을 반드시 남긴다**: 구조화 호출이 실패하면 1라운드에 한해
+원본 질문으로 검색을 강제해, 에이전트가 완전히 실패해도 기존 DOC_SEARCH 경로와
+같게 동작한다.
 
-C는 A.X 4.0 Light(7B)의 tool-calling 안정성에 크게 의존하므로,
-L40에서 7단계 성공률 측정 후 도입 여부를 판단하는 것을 권한다.
+기존 plan-then-execute 배선(route + 실행 큐)은 **제거했다**. 되살릴 일이
+생기면 전환 이전 커밋을 참조한다 — 두 배선을 함께 끌고 가지 않는다.

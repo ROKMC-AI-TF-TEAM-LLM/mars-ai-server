@@ -99,6 +99,20 @@ class Config:
     # 경고 없이 노출되므로 배포 시 프론트 대응 여부를 확인할 것
     KNOWLEDGE_FALLBACK_ENABLED: bool
 
+    # --- ReAct 에이전트 루프 (docs/react_migration_plan.md) ---
+    # 도구 호출 라운드 상한. 무한 루프는 곧 토큰 예산 파괴다 (code_guide §12 패턴 C)
+    MAX_AGENT_STEPS: int
+    # 검색 호출 상한. 라운드 상한과 별개로 두는 이유는 검색이 가장 비싼
+    # 행동(임베딩+BM25+리랭커 왕복)이기 때문이다
+    MAX_SEARCH_CALLS: int
+    # verify 반려 사유를 에이전트에게 되돌려 재검색을 한 번 더 시도할지 여부.
+    # 끄면 반려 시 종전대로 generate만 재실행한다 (지연 우려 시 사용)
+    AGENT_VERIFY_FEEDBACK: bool
+    # 에이전트의 판단 근거(thought)를 SSE status 이벤트에 실어 보낼지 여부.
+    # ⚠️ thought는 verify를 거치지 않는 LLM 자유 생성이다. 위생 처리
+    # (query_graph/thought.py)를 거치지만, 문제가 생기면 이 스위치로 즉시 끈다
+    STREAM_THOUGHTS: bool
+
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
@@ -199,6 +213,10 @@ def get_config() -> Config:
         HISTORY_MAX_TOKENS=_env_int("HISTORY_MAX_TOKENS", 1500),
         GENERATE_TEMPERATURE=_env_float("GENERATE_TEMPERATURE", 0.2),
         KNOWLEDGE_FALLBACK_ENABLED=_env_bool("KNOWLEDGE_FALLBACK_ENABLED", True),
+        MAX_AGENT_STEPS=_env_int("MAX_AGENT_STEPS", 3),
+        MAX_SEARCH_CALLS=_env_int("MAX_SEARCH_CALLS", 2),
+        AGENT_VERIFY_FEEDBACK=_env_bool("AGENT_VERIFY_FEEDBACK", True),
+        STREAM_THOUGHTS=_env_bool("STREAM_THOUGHTS", True),
         AUDIT_LOG_PATH=_env_str("AUDIT_LOG_PATH", "./data/audit_log.jsonl"),
         MARS_SERVER_URL=_env_str("MARS_SERVER_URL", "http://localhost:9000"),
         UPLOAD_DIR=_env_str("UPLOAD_DIR", "./data/uploads"),

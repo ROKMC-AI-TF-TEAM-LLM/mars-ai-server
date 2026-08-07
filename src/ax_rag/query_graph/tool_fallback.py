@@ -68,9 +68,24 @@ def json_schema_format(schema: type[BaseModel]) -> dict:
 
     ClassVar(RETRY_EXAMPLE 등)는 pydantic이 알아서 제외한다.
     additionalProperties=False는 스키마 밖 필드를 막아 파싱을 단순하게 한다.
+
+    ★ **모든 속성을 required로 올린다.** pydantic은 기본값이 있는 필드를
+    required에서 빼는데, 주 경로가 문법 강제 디코딩이 된 뒤로는 그것이 관용이
+    아니라 **면제**가 된다 — 모델이 그 필드를 아예 안 채워도 문법이 통과시킨다.
+    실측 피해 2건:
+      - VerifyAnswer.unsupported가 늘 비어 와서 **부분 수용이 죽어 있었다**
+        (근거 없는 문장만 덜어내는 안전망이 한 번도 발동하지 못함)
+      - AgentAction.thought가 늘 비어 와서 판단 근거 스트리밍이 기본 문구만 나갔다
+    스키마에 노출되는 `"default": ""`가 작은 모델에게 "비워도 된다"는 신호로
+    읽히는 문제도 함께 없앤다. strict=true는 원래 모든 속성이 required여야
+    하므로(OpenAI 계약) 규격에도 더 맞는다.
+
+    파싱은 그대로 관대하다: pydantic 쪽 기본값은 남아 있어, 문법 강제가 없는
+    폴백 경로(tool-call·JSON 강제)에서 모델이 키를 빠뜨려도 검증에 걸리지 않는다.
     """
     json_schema = schema.model_json_schema()
     json_schema["additionalProperties"] = False
+    json_schema["required"] = list(json_schema.get("properties", {}))
     return {
         "type": "json_schema",
         "json_schema": {"name": schema.__name__, "strict": True, "schema": json_schema},

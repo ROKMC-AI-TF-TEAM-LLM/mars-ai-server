@@ -17,7 +17,7 @@ from ax_rag.api.schemas import QueryRequest
 from ax_rag.api.sse import sse_event, stream_answer
 from ax_rag.query_graph.graph import graph
 from ax_rag.query_graph.prompts import KNOWLEDGE_ANSWER_NOTICE
-from ax_rag.query_graph.stages import status_after_node
+from ax_rag.query_graph.stages import status_event_payload
 from ax_rag.shared.audit_log import log_query
 from ax_rag.shared.logging_setup import get_logger
 
@@ -105,11 +105,15 @@ async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIte
             for node_name, delta in update.items():
                 if isinstance(delta, dict):
                     result.update(delta)  # 노드별 변경분을 병합해 최종 상태를 복원
-                status = status_after_node(node_name, result)
-                if status is not None:
-                    stage, message = status
-                    logger.debug("SSE status: %s (%s 완료 후)", message, node_name)
-                    yield sse_event({"type": "status", "stage": stage, "message": message})
+                payload = status_event_payload(node_name, result)
+                if payload is not None:
+                    logger.debug(
+                        "SSE status: %s (%s 완료 후)%s",
+                        payload["message"],
+                        node_name,
+                        f" thought={payload['thought']}" if payload.get("thought") else "",
+                    )
+                    yield sse_event(payload)
 
         grounded = bool(result.get("grounded"))
         sources = _build_sources(result.get("retrieved_chunks") or [], grounded)
@@ -122,6 +126,9 @@ async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIte
             sources=[s["name"] for s in sources],
             grounded=grounded,
             answer_mode=answer_mode,
+            # ReAct: 어떤 도구를 어떤 인자로 몇 번 불렀는지 (code_guide §12 패턴 C 요건)
+            tool_calls=result.get("tool_calls_log") or None,
+            agent_steps=int(result.get("agent_steps") or 0),
         )
         async for frame in stream_answer(
             result.get("final_answer") or "",
