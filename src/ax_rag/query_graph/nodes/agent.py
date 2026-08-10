@@ -1,19 +1,15 @@
 """agent 노드: 다음에 할 행동 하나를 정한다 (ReAct 루프의 판단부).
 
-한 번의 구조화 호출로 **thought(판단 근거) + action(행동) + 인자**를 함께 받는다.
-thought를 먼저 선언하는 것은 부수 효과가 있다 — 작은 모델이 근거를 쓰고 나서
-행동을 고르게 되어 선택 자체의 품질이 올라간다.
+한 번의 구조화 호출로 thought(판단 근거) + action(행동) + 인자를 받는다.
+thought를 첫 필드로 두면 모델이 근거를 쓰고 나서 행동을 골라 선택 품질이 올라간다.
 
-이 노드는 답변을 쓰지 않는다. 근거를 모으는 행동만 고르고, 답변 작성은
-generate가, 근거 검증은 verify가 그대로 맡는다.
+이 노드는 답변을 쓰지 않는다 — 근거를 모으는 행동만 고른다.
 
-결정적 안전장치 (LLM이 완전히 실패해도 현행보다 나빠지지 않게 한다):
-1) 요청의 tool 필드로 강제된 경로는 LLM 없이 그 행동으로 직행한다
-2) 결정적 매처(전역일·파일 저장)가 잡은 도구는 LLM 없이 확정한다.
-   짧은 질문이면 그대로 종결까지 한다 (현행 라우터의 LLM 0회 경로 승계)
-3) 구조화 호출이 실패하면 1라운드에 한해 **원본 질문으로 검색**을 강제한다
-   — 현행 DOC_SEARCH 폴백과 같은 동작이다
-4) 라운드·검색 횟수 상한을 넘으면 LLM에 묻지 않고 종료한다
+결정적 안전장치 (LLM이 완전히 실패해도 나빠지지 않게):
+1) 요청의 tool 필드로 강제된 경로는 LLM 없이 직행
+2) 결정적 매처가 잡은 도구는 LLM 없이 확정 (짧은 질문이면 종결까지)
+3) 구조화 호출 실패 시 1라운드에 한해 원본 질문으로 검색 강제
+4) 라운드·검색 상한을 넘으면 LLM에 묻지 않고 종료
 """
 
 from __future__ import annotations
@@ -64,9 +60,8 @@ AGENT_SYSTEM_PROMPT = AGENT_SYSTEM_TEMPLATE.format(action_guide=action_guide())
 class AgentAction(BaseModel):
     """다음 행동 하나 + 그 판단 근거.
 
-    thought를 첫 필드로 두어 모델이 근거를 먼저 쓰게 한다.
-    action 외의 인자는 해당 행동에서만 쓰이므로 전부 기본값이 있다 —
-    작은 모델이 빈 값을 채워 보내도 검증에서 떨어뜨리지 않는다.
+    행동별 인자는 전부 기본값을 둔다 — 폴백 경로에서 모델이 키를 빠뜨려도
+    검증에 걸리지 않게 하기 위해서다 (주 경로는 json_schema가 required로 강제).
     """
 
     thought: str = ""  # 사용자에게 표시되는 판단 근거 (한 문장)
@@ -96,9 +91,8 @@ def _decision(
 ) -> dict:
     """agent 노드의 반환 delta를 만든다 (행동 결정 + 표시용 thought).
 
-    force_finish는 **항상** 값을 실어 보낸다. 조건부로만 True를 넣으면 이전
-    라운드의 True가 상태에 남아, 새 행동이 정상 실행됐는데도 after_act가
-    루프를 조기 종료시킨다 (LangGraph는 delta를 병합할 뿐 지우지 않는다).
+    ★ force_finish는 **항상** 실어 보낸다. 조건부로 넣으면 이전 라운드의 True가
+    남아 루프가 조기 종료된다 (LangGraph는 delta를 병합할 뿐 지우지 않는다).
     """
     cleaned = sanitize_thought(thought) or DEFAULT_THOUGHTS.get(action, DEFAULT_THOUGHT)
     return {
@@ -106,7 +100,6 @@ def _decision(
         "agent_thought": cleaned,
         "next_action": action,
         "next_action_args": args,
-        # True면 결정적으로 확정된 단독 행동 — 실행 후 LLM에 다시 묻지 않는다
         "force_finish": force_finish,
     }
 
@@ -126,11 +119,7 @@ def _matched_intents(state: QueryState) -> list[str]:
 
 
 def _seed_deferred(state: QueryState, matched: list[str]) -> dict:
-    """매처가 잡은 **지연 도구**(파일 저장 등)를 실행 예약에 넣는다.
-
-    지연 도구는 검증 통과 후에 실행되므로 라운드를 소비하지 않는다.
-    LLM이 빠뜨려도 잃지 않게 코드로 보장 등록한다.
-    """
+    """매처가 잡은 지연 도구를 실행 예약에 넣는다 (LLM이 빠뜨려도 잃지 않게)."""
     deferred = list(state.get("deferred_actions") or [])
     for intent in matched:
         action = INTENT_TO_ACTION.get(intent, "")
@@ -168,10 +157,9 @@ def _search_exhausted(state: QueryState) -> bool:
 
 
 def _history_block(state: QueryState) -> str:
-    """대화 이력을 '참고 데이터' 블록으로 만든다 (대화 메시지로 넣지 않는다).
+    """대화 이력을 '참고 데이터' 블록으로 만든다.
 
-    작은 모델이 판단 대신 대화 이어가기로 끌려가 구조화 출력을 놓치는 현상이
-    라우터에서 실측됐다 — 같은 기법을 쓴다.
+    대화 메시지로 넣으면 작은 모델이 판단 대신 대화 이어가기로 끌려간다.
     """
     history = trim_history(state.get("conversation_history") or [], get_config().HISTORY_MAX_TOKENS)
     if not history:
@@ -242,8 +230,6 @@ def agent(state: QueryState) -> dict:
         return {**seed, **_decision(step, ACTION_FINISH, {}, "확인한 근거로 답변을 정리한다")}
 
     messages = _build_messages(state)
-    # 에이전트가 "무엇을 보고" 그 행동을 골랐는지 — 관측이 제대로 실렸는지,
-    # 이력이 데이터 블록으로 들어갔는지를 확인하는 유일한 수단이다
     logger.debug("에이전트[%d] 입력 ↓\n%s", step, messages[-1].content)
     try:
         args = call_with_schema(messages, AgentAction, llm_getter=get_llm)
@@ -254,7 +240,6 @@ def agent(state: QueryState) -> dict:
 
     if args is None:
         if step == 1:
-            # 결정적 폴백: 현행 DOC_SEARCH 경로와 동일하게 원본 질문으로 검색한다
             logger.warning("에이전트 판단 실패(1라운드) → 원본 질문으로 검색 폴백")
             return {
                 **seed,
@@ -266,8 +251,7 @@ def agent(state: QueryState) -> dict:
     thought = str(args.get("thought") or "")
     action = resolve_action(str(args.get("action") or ""))
     if not thought.strip():
-        # 모델이 판단 근거를 안 채우면 사용자에게는 기본 문구만 나간다
-        # (추론 스트리밍이 사실상 꺼진 상태). 자주 뜨면 스키마·프롬프트 문제다
+        # 자주 뜨면 스키마·프롬프트 문제다 (추론 스트리밍이 사실상 꺼진 상태)
         logger.warning("에이전트[%d]가 thought를 비워 보냈다 → 기본 문구로 대체", step)
     if not action:
         logger.warning("에이전트가 미지의 행동을 냈다: %r → 종료로 처리", args.get("action"))

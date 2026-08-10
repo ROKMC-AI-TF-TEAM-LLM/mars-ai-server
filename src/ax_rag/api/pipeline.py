@@ -27,10 +27,9 @@ logger = get_logger(__name__)
 def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
     """근거 청크에서 중복 없는 sources 목록을 만든다.
 
-    sources는 "답변의 근거로 실제 사용된 문서"다. verify를 통과하지 못한
-    답변(fallback)은 검색 결과를 근거로 쓰지 않았으므로 빈 목록을 반환한다
-    (예: "안녕" 같은 잡담에 검색 상위 문서가 출처로 노출되는 것 방지).
-    page는 청크 메타데이터에 페이지 정보가 없으므로 null (미확정 항목).
+    sources는 "답변의 근거로 실제 사용된 문서"다 — 검증을 통과하지 못한
+    답변은 검색 결과를 근거로 쓰지 않았으므로 빈 목록을 반환한다.
+    page는 청크 메타데이터에 페이지 정보가 없어 null이다 (미확정 항목).
     """
     if not grounded:
         return []
@@ -45,12 +44,7 @@ def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
 
 
 def _answer_notice(answer_mode: str | None) -> dict | None:
-    """답변 경로에 따라 붙일 SSE notice 페이로드. 붙일 것이 없으면 None.
-
-    지식 기반 답변(answer_mode="knowledge")은 검증을 거치지 않은 LLM 자체
-    지식이므로 문서 근거가 없음을 사용자에게 알린다. 경고를 답변 텍스트에
-    섞지 않고 별도 이벤트로 보내 프론트가 다르게 표시하게 한다.
-    """
+    """답변 경로에 따라 붙일 SSE notice 페이로드. 붙일 것이 없으면 None."""
     if answer_mode == "knowledge":
         return dict(KNOWLEDGE_ANSWER_NOTICE)
     return None

@@ -5,27 +5,21 @@ tool 필드, GET /capabilities)에 그대로 노출되기 때문이다. 에이�
 **행동 이름**은 별개이며 agent_tools.py가 소유한다 (intent ↔ 행동 매핑도 거기).
 
 커스텀 도구 추가 절차:
-1) nodes/<도구>.py 작성 — smalltalk과 동일 계약: state를 받아
-   tool_contract.tool_answer(답변)의 반환값을 그대로 돌려준다
-   (반환 dict를 손으로 적지 말 것 — grounded 누락 시 검증 실패 답변에
-   출처가 붙는다. 파일을 만드는 도구는 generated_files 인자를 함께 넘긴다)
-2) 아래 TOOL_NODES에 노드 등록 + TOOL_DESCRIPTIONS에 한 줄 설명
-   + TOOL_HANDLED_LABELS에 예시 없는 짧은 라벨
-3) agent_tools.AGENT_TOOLS에 행동 등록 (이름·설명). 실행 시점은 아래
-   POST_SEARCH_TOOLS 포함 여부로 자동 결정된다
-4) (선택) 결정적으로 감지 가능한 도구면 TOOL_MATCHERS에 매처 등록 —
-   LLM 판단보다 먼저 코드로 확정해 오분류·지연을 없앤다
-5) (선택) "방금 만든 답변"을 입력으로 쓰는 도구면 POST_SEARCH_TOOLS에 추가
-   — 검증 통과 뒤에 실행된다 (검증 실패 시 미실행)
-6) (선택) 실행 중 프론트에 보여줄 문구를 TOOL_STATUS_MESSAGES에 등록
-   (미등록이면 기본 문구 "요청을 처리하는 중...")
+1) nodes/<도구>.py 작성 — state를 받아 tool_contract.tool_answer()의 반환값을
+   그대로 돌려준다 (dict를 손으로 적지 말 것: grounded 누락 시 검증 실패
+   답변에 출처가 붙는다)
+2) TOOL_NODES + TOOL_DESCRIPTIONS(한 줄 설명) + TOOL_HANDLED_LABELS(예시 없는 라벨)
+3) agent_tools.AGENT_TOOLS에 행동 등록. 실행 시점은 POST_SEARCH_TOOLS 포함
+   여부로 자동 결정된다
+4) (선택) TOOL_MATCHERS — 코드로 확정 가능한 도구면 LLM 판단보다 먼저 잡는다
+5) (선택) POST_SEARCH_TOOLS — "방금 만든 답변"을 입력으로 쓰는 도구
+6) (선택) TOOL_STATUS_MESSAGES — 실행 중 진행 문구
 
-이것만으로 그래프 배선, 에이전트 프롬프트의 행동 목록, 진행 안내 문구,
-강제 선택 허용값(api.normalize_tool), /capabilities 응답이 전부 자동 반영된다.
+이것만으로 그래프 배선, 에이전트 행동 목록, 진행 문구, 강제 선택 허용값,
+/capabilities 응답이 전부 자동 반영된다.
 
-DOC_SEARCH는 도구가 아니라 검색 경로 이름이므로 TOOL_NODES에 넣지 않는다.
-도메인 한정 검색(교범/훈령 모드)도 도구가 아니라 요청의 domain 필드로
-처리한다 (interfaces.md §5).
+DOC_SEARCH는 도구가 아니라 검색 경로 이름이라 TOOL_NODES에 넣지 않는다.
+도메인 한정도 도구가 아니라 요청의 domain 필드로 처리한다 (interfaces.md §5).
 """
 
 from __future__ import annotations
@@ -72,11 +66,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "기존 답변을 그대로 저장하는 건 HWP_EXPORT)",
 }
 
-# generate/verify의 "도구가 처리함" 안내문(tool_handled_note)용 짧은 라벨.
-# TOOL_DESCRIPTIONS(라우터용)를 그대로 쓰면 안 된다 — 분류용 예시 문구
-# ("해병대 조사해서 문서로 만들어줘")를 7B 검증기가 답변 내용으로 착각해
-# grounded=false 오탐을 낸다 (실측: 예시 주제가 실제 질문과 겹칠 때).
-# 예시·질문형 문구 없이 요청 유형만 서술한다
+# generate/verify 안내문용 짧은 라벨. TOOL_DESCRIPTIONS(라우터용)를 쓰면 안 된다 —
+# 분류용 예시 문구를 검증기가 답변 내용으로 착각해 오탐을 낸다. 예시 없이 유형만 서술할 것
 TOOL_HANDLED_LABELS: dict[str, str] = {
     "SMALLTALK": "잡담·인사 응대",
     "DISCHARGE_DAYS": "전역일·남은 날짜 계산",
@@ -93,13 +84,10 @@ TOOL_MATCHERS: dict[str, Callable[[str], bool]] = {
 }
 
 
-# 요청의 tool 필드로 강제 지정을 허용하는 도구 화이트리스트.
-# SMALLTALK은 제외: 강제 잡담 경로로 업무 질문이 들어오면 verify 밖에서
-# 모델이 규정을 지어내는 것을 실측 — 프롬프트로 막히지 않아 구조적으로 차단한다.
-# 강제를 전제로 설계됐거나 강제로 들어와도 안전한 도구만 등록할 것.
-# - HWP_EXPORT: 결정적 코드 도구 — 프론트 "답변 저장" 버튼이 강제 지정으로 쓴다
-# - HWP_DRAFT: LLM 생성이지만 사용자 제공 내용의 형식화라 강제 유입이 안전
-#   (규정·수치를 물어도 문서 초안으로 정리할 뿐 사실을 답하지 않음)
+# 요청의 tool 필드로 강제 지정을 허용하는 화이트리스트.
+# ⚠️ SMALLTALK 제외 — 강제 잡담 경로로 업무 질문이 들어오면 verify 밖에서
+# 모델이 규정을 지어내는 것을 실측했고, 프롬프트로 막히지 않아 구조적으로 차단한다.
+# 강제로 들어와도 안전한 도구(결정적 코드 도구, 사용자 제공 내용의 형식화)만 등록할 것
 FORCIBLE_TOOLS: frozenset[str] = frozenset({"DISCHARGE_DAYS", "HWP_EXPORT", "HWP_DRAFT"})
 
 
@@ -125,19 +113,13 @@ POST_SEARCH_TOOLS: frozenset[str] = frozenset({"HWP_EXPORT"})
 
 
 def format_handled_note(state: QueryState, template: str) -> str:
-    """도구가 담당한 요청 유형을 안내하는 꼬리 프롬프트를 만든다 (generate/verify 공용).
+    """도구가 담당한 요청 유형을 안내하는 꼬리 프롬프트 (generate/verify 공용).
 
-    이미 실행된 전처리 도구(tool_answers)뿐 아니라 **아직 실행 전인 후처리
-    도구**(계획 속 POST_SEARCH_TOOLS — 파일 저장 등)도 포함한다:
-    - generate: 빠뜨리면 "그 기능은 제공하지 않는다" 같은 잘못된 사족을 붙인다 (실측)
-    - verify: 빠뜨리면 답변이 도구 몫을 안 다뤘다고 grounded=false 오탐을 낸다 (실측)
+    아직 실행 전인 지연 도구도 포함한다 — 빠뜨리면 generate가 "그 기능은
+    제공하지 않는다"는 사족을 붙이고, verify가 도구 몫을 안 다뤘다고 오탐을 낸다.
 
-    도구 답변의 수치는 넣지 않는다 — 검증기가 "답변이 근거 밖 수치를 말한다"고
-    오판할 수 있다. 라우터용 상세 설명(TOOL_DESCRIPTIONS)이 아니라 예시 없는
-    짧은 라벨(TOOL_HANDLED_LABELS)을 쓰는 이유도 같다:
-    분류 예시 문구가 안내문에 실리면 7B가 답변 내용으로 착각한다 (실측).
-
-    담당 도구가 없으면 빈 문자열 (안내문 자체를 붙이지 않는다).
+    도구 답변의 수치와 분류 예시 문구는 넣지 않는다. 검증기가 답변 내용으로
+    착각해 근거 밖 수치라고 오판한다.
     """
     handled = [item.get("intent") for item in (state.get("tool_answers") or [])]
     handled += [

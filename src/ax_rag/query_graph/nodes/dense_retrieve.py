@@ -1,9 +1,8 @@
 """dense_retrieve 노드: rewritten_query 임베딩 → Milvus Lite 벡터 검색.
 
 ACL(visibility/부서)은 Milvus 스칼라 필터로 강제한다 (architecture.md §4).
-도메인 한정은 요청이 명시한 경우(requested_domain)에만 적용한다 —
-라우터의 LLM 분류는 검색 범위를 제한하지 않는다 (분류-적재 불일치로
-정답 문서가 배제되는 사고 방지, 실측 사례 있음).
+도메인 한정은 요청이 명시한 경우에만 적용한다 — LLM 분류로 검색 범위를
+좁히면 분류-적재 불일치로 정답 문서가 배제된다.
 """
 
 from __future__ import annotations
@@ -30,10 +29,9 @@ _OUTPUT_FIELDS = [
 
 
 def _embed_queries(queries: list[str]) -> list[list[float]]:
-    """임베딩 서버 호출 (localhost, timeout 필수). 여러 쿼리를 1회 호출로 처리한다.
+    """임베딩 서버 호출 (localhost, timeout 필수).
 
-    임베딩 서버가 texts 배열을 받으므로(serving/embedding_server.py) 쿼리가
-    늘어도 HTTP 왕복은 1회다 — 다중 쿼리의 지연 비용이 사실상 없는 이유.
+    서버가 texts 배열을 받으므로 쿼리가 늘어도 HTTP 왕복은 1회다.
     """
     config = get_config()
     response = requests.post(
@@ -48,8 +46,7 @@ def _embed_queries(queries: list[str]) -> list[list[float]]:
 def _search(embedding: list[float], expr: str, query_index: int) -> list[dict]:
     """Milvus 벡터 검색 실행 → 후보 dict 목록.
 
-    query_index는 어느 검색 쿼리에서 나온 후보인지 표시한다 — fuse가 쿼리별로
-    묶어 융합할 때 쓴다 (상태 형태는 평면 리스트 그대로 유지).
+    query_index는 fuse가 쿼리별로 묶어 융합할 때 쓴다.
     """
     hits_per_query = get_client().search(
         get_collection(),

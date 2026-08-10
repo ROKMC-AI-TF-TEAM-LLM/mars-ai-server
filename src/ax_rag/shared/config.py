@@ -58,11 +58,8 @@ class Config:
     RERANKER_MODEL_PATH: str  # 로컬 경로만 허용 (Hub ID 금지)
     RERANK_TOP_K: int
     RERANK_TOP_N: int
-    # 리랭크 점수 하한 (0~1). 이 미만 후보는 top_n 이내라도 근거·출처에서
-    # 제외한다. bge-reranker 점수는 관련(0.6+)/무관(0.05 미만)으로 극명하게
-    # 갈리는 분포(실측)라 그 사이 값이면 무관 문서를 안정적으로 걸러낸다.
-    # 0이면 비활성 (기존 동작). 코퍼스가 커져 중간 점수대가 생기면
-    # 평가셋으로 재조정할 것 (roadmap 6단계)
+    # 리랭크 점수 하한 (0~1). 미만 후보는 top_n 이내라도 근거에서 제외한다.
+    # bge-reranker 점수는 관련(0.6+)/무관(0.05 미만)으로 갈려 그 사이가 적절하다. 0이면 비활성
     RERANK_SCORE_THRESHOLD: float
 
     # --- Milvus Lite (임베디드) ---
@@ -78,70 +75,37 @@ class Config:
     # --- 파이프라인 ---
     MAX_VERIFY_RETRY: int
     HISTORY_MAX_TOKENS: int
-    # generate 노드 전용 온도 (기본 0.2). 라우터·verify는 0 고정(분류·판정
-    # 재현성), 답변 생성만 살짝 올려 문장 자연스러움 + verify 재시도 시
-    # 실질적으로 다른 초안이 나오게 한다 (0이면 재생성해도 사실상 같은 답).
-    #
-    # 0.3으로 올려 봤다가 되돌렸다 — 정성 평가에서 fallback 5/13 → 8/13,
-    # 평균 답변 길이 322자 → 171자로 악화. 답변이 길어지면서 근거 밖 문장이
-    # 섞일 표면적도 함께 커졌고, 긴 답변을 내던 훈령·법령 문항 3개가 전부
-    # 무너졌다. 근거 준수의 통제 수단은 온도가 아니라 프롬프트다
+    # generate 전용 온도. 라우터·verify는 0 고정(판정 재현성).
+    # ⚠️ 0.3으로 올렸다가 되돌렸다 — 근거 준수의 통제 수단은 온도가 아니라
+    # 프롬프트다 (docs/experiments.md §4)
     GENERATE_TEMPERATURE: float
 
-    # 검색 근거를 하나도 못 찾았을 때, 정형 사과 문구 대신 LLM의 자체 지식으로
-    # 답변할지 여부. 도메인 미지정(전체 검색) + 근거 0건일 때만 발동한다
-    # (graph._can_answer_from_knowledge).
-    #
-    # ⚠️ 이 경로는 verify를 거치지 않는다 — 모델이 규정을 지어내도 걸러지지
-    # 않는다. 같은 위험이 SMALLTALK 강제 지정에서 실측돼 구조적으로 차단된
-    # 전례가 있다 (tools.FORCIBLE_TOOLS 주석). 답변에는 SSE notice 이벤트로
-    # "문서 근거 없음" 경고가 따라붙으며, 프론트가 그 이벤트를 처리하지 않으면
-    # 경고 없이 노출되므로 배포 시 프론트 대응 여부를 확인할 것
+    # 근거 0건 + 도메인 미지정일 때 정형 문구 대신 LLM 자체 지식으로 답할지.
+    # ⚠️ verify를 거치지 않는 경로다. SSE notice 경고가 따라붙으므로,
+    # 프론트가 그 이벤트를 표시하지 않는 상태로 켜지 말 것
     KNOWLEDGE_FALLBACK_ENABLED: bool
 
-    # --- ReAct 에이전트 루프 (docs/react_migration_plan.md) ---
-    # 도구 호출 라운드 상한. 무한 루프는 곧 토큰 예산 파괴다 (code_guide §12 패턴 C)
-    MAX_AGENT_STEPS: int
-    # 검색 호출 상한. 라운드 상한과 별개로 두는 이유는 검색이 가장 비싼
-    # 행동(임베딩+BM25+리랭커 왕복)이기 때문이다
-    MAX_SEARCH_CALLS: int
-    # verify 반려 사유를 에이전트에게 되돌려 재검색을 한 번 더 시도할지 여부.
-    # 끄면 반려 시 종전대로 generate만 재실행한다 (지연 우려 시 사용)
-    AGENT_VERIFY_FEEDBACK: bool
-    # 에이전트의 판단 근거(thought)를 SSE status 이벤트에 실어 보낼지 여부.
-    # ⚠️ thought는 verify를 거치지 않는 LLM 자유 생성이다. 위생 처리
-    # (query_graph/thought.py)를 거치지만, 문제가 생기면 이 스위치로 즉시 끈다
+    # --- ReAct 에이전트 루프 ---
+    MAX_AGENT_STEPS: int  # 도구 호출 라운드 상한 (무한 루프 = 토큰 예산 파괴)
+    MAX_SEARCH_CALLS: int  # 검색 호출 상한. 검색이 가장 비싼 행동이라 따로 둔다
+    AGENT_VERIFY_FEEDBACK: bool  # 반려 사유를 되돌려 재검색을 한 번 더 시도할지
+    # ⚠️ thought는 verify를 거치지 않는 자유 생성이다 (thought.py에서 위생 처리)
     STREAM_THOUGHTS: bool
 
     # --- 감사 로그 ---
     AUDIT_LOG_PATH: str
 
-    # --- 자기 자신(MARS API) 주소. 평가·비교 스크립트가 /query를 호출할 때만 쓴다.
-    # 서버 코드는 이 값을 쓰지 않는다 (자기 자신을 HTTP로 부르지 않음) ---
+    # 평가·비교 스크립트 전용. 서버 코드는 자기 자신을 HTTP로 부르지 않는다
     MARS_SERVER_URL: str = "http://localhost:9000"
 
-    # --- 문서 업로드 임시 스테이징 경로 (POST /documents가 받은 파일 원본) ---
-    # 원본의 영속 보관 주체는 미들웨어(자기 DB)다. MARS는 청킹·임베딩·색인만
-    # 한다. 여기 스테이징된 로컬 원본의 TTL 정리는 향후 도입 예정
-    # (계획: docs/roadmap.md 미확정 항목 — UPLOAD_TTL_HOURS)
+    # 업로드 원본의 임시 스테이징. 영속 보관 주체는 미들웨어다
     UPLOAD_DIR: str = "./data/uploads"
+    EXPORT_DIR: str = "./data/exports"  # 생성 문서(HWPX 등), GET /files/{파일명}
+    EXPORT_TTL_HOURS: int = 24  # 새 파일 생성 시점에 만료분 정리. 0 이하면 비활성
 
-    # --- 생성 문서(HWPX 등) 저장 경로 (GET /files/{파일명}로 다운로드) ---
-    EXPORT_DIR: str = "./data/exports"
-
-    # 생성 문서 보관 시간(시간 단위). 새 파일 생성 시점에 만료분을 정리한다
-    # (기회적 정리 — 미들웨어가 file 이벤트로 즉시 가져가므로 임시 보관이면 충분).
-    # 0 이하면 정리 비활성
-    EXPORT_TTL_HOURS: int = 24
-
-    # --- 외부 서비스 호출 공통 timeout (초) ---
     HTTP_TIMEOUT_SECONDS: float = 60.0
-
-    # --- 로그 레벨 (DEBUG/INFO/WARNING/ERROR) ---
     LOG_LEVEL: str = "INFO"
-
-    # --- SSE text 이벤트 간 전송 간격(ms). 체감 스트리밍(타자기 효과)용 ---
-    STREAM_TEXT_INTERVAL_MS: int = 200
+    STREAM_TEXT_INTERVAL_MS: int = 200  # SSE text 간 전송 간격 (타자기 효과)
 
     def __post_init__(self) -> None:
         """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다."""

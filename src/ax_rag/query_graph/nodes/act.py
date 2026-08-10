@@ -4,13 +4,12 @@
 - retry_search  — verify 반려 사유를 관측으로 실어 에이전트에게 되돌린다
 - run_deferred  — 검증 통과 후 지연 도구(파일 저장 등)를 실행한다
 
-관측은 요약본이고, 답변 작성에 쓰이는 근거 전문은 state.retrieved_chunks에
-쌓인다. 그리고 **누적 근거는 항상 RERANK_TOP_N개로 절단**된다
-(retrieval.merge_chunks) — 이 절단이 다중 검색에도 생성 컨텍스트가 늘지 않는
-이유이자 16K 예산이 유지되는 근거다.
+관측은 요약본이고 근거 전문은 state.retrieved_chunks에 쌓인다. 누적 근거는
+항상 RERANK_TOP_N개로 절단되므로(retrieval.merge_chunks) 검색을 몇 번 하든
+생성 컨텍스트가 늘지 않는다.
 
-보안: 검색 범위(ACL·도메인)는 상태에서만 읽는다. 에이전트가 준 인자는
-검색어와 초안 본문뿐이며, 검색어조차 파일 요청 표현을 걷어낸 뒤 쓴다.
+보안: 검색 범위(ACL·도메인)는 상태에서만 읽는다. 에이전트가 주는 인자는
+검색어와 초안 본문뿐이다.
 """
 
 from __future__ import annotations
@@ -46,8 +45,6 @@ def _normalize_query(query: str) -> str:
 
 def _record(state: QueryState, action: str, observation: str, thought: str = "") -> list[dict]:
     """스크래치패드에 관측 한 건을 덧붙인 새 목록을 만든다."""
-    # 다음 라운드의 판단 재료가 이것이다 — 관측이 부실하면 에이전트가 같은
-    # 실수를 반복하므로, 무엇을 돌려줬는지 볼 수 있어야 한다
     logger.debug("관측[%s] ↓\n%s", action, observation)
     return [
         *(state.get("agent_scratchpad") or []),
@@ -70,8 +67,7 @@ def _log_entry(state: QueryState, action: str, args: dict) -> list[dict]:
 def _executed_paths(state: QueryState, intent: str) -> list[str]:
     """실행된 경로 기록(intents)에 intent를 한 번만 덧붙인다.
 
-    최종 답변 합성 순서(graph._compose_final)가 이 목록을 따른다 —
-    ReAct에서는 계획이 아니라 **실행 순서**가 합성 순서가 된다.
+    최종 답변 합성 순서(graph._compose_final)가 이 목록을 따른다.
     """
     paths = list(state.get("intents") or [])
     if intent not in paths:
@@ -87,10 +83,8 @@ def _act_search(state: QueryState, args: dict) -> dict:
     normalized = _normalize_query(query)
 
     if normalized in {_normalize_query(item) for item in searched}:
-        # 같은 검색을 반복하면 결과도 같다 — LLM에 되묻지 않고 루프를 끝낸다.
-        # search_ideas_exhausted를 함께 세운다: 에이전트가 새 검색어를 못 내놓는
-        # 상태라는 뜻이므로, 검증 반려 후 되먹임(retry_search)으로 루프를 다시
-        # 열어도 같은 검색어가 또 나올 뿐이다 (실측: 3라운드 내내 동일 검색어)
+        # 같은 검색은 결과도 같다 — 되묻지 않고 끝낸다. search_ideas_exhausted는
+        # "새 검색어를 못 내놓는 상태"라는 뜻이라 반려 되먹임도 막는다
         logger.info("중복 검색어 감지(%s) → 재검색 생략하고 종료", query)
         return {
             "agent_scratchpad": _record(state, ACTION_SEARCH, format_duplicate_observation(query)),
@@ -148,11 +142,9 @@ def _act_tool(state: QueryState, action: str, args: dict) -> dict:
 
     delta = tool.node(state) or {}
     answer = str(delta.get("final_answer") or "")
-    # 도구 계약(tool_contract.tool_answer)의 grounded=False·retrieved_chunks=[]는
-    # **일부러 버린다.** 그 값들은 "도구 단독 응답"을 전제로 한 것이라, 루프에서
-    # 그대로 상태에 병합하면 이미 모아 둔 검색 근거를 지워 버린다. 도구가 근거를
-    # 주장하지 않는다는 성질은 grounded를 세우지 않는 것으로 이미 지켜진다
-    # (verify를 통과해야만 True가 되고, 그때만 출처가 붙는다)
+    # 도구 계약의 grounded=False·retrieved_chunks=[]는 **일부러 버린다** —
+    # "도구 단독 응답" 전제의 값이라 그대로 병합하면 모아 둔 근거를 지운다.
+    # grounded를 세우지 않는 것으로 근거 미주장 성질은 이미 지켜진다
     return {
         "tool_answers": [
             *(state.get("tool_answers") or []),
