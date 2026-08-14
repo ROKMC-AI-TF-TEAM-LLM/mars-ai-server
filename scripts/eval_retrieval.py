@@ -5,13 +5,18 @@ compare_answers.py의 source_hit_rate는 서버 SSE의 sources를 보는데, 검
 지표는 pass_rate의 종속값이 되어 **실패 원인이 검색인지 생성·검증인지 구분하지
 못한다** (실측: 30문항 전부에서 두 값이 일치).
 
-이 스크립트는 route → dense → bm25 → fuse → rerank 까지만 in-process로 돌려
-기대 근거 문서가 실제로 검색됐는지 직접 확인한다. generate·verify를 호출하지
-않으므로 빠르고(문항당 10~30초), 검색 문제와 검증 문제를 분리해 준다.
+이 스크립트는 dense → bm25 → fuse → rerank 까지만 in-process로 돌려 기대 근거
+문서가 실제로 검색됐는지 직접 확인한다. generate·verify를 호출하지 않으므로
+빠르고, 검색 문제와 검증 문제를 분리해 준다.
+
+**검색어**: 기본값은 질문 원문이다 (LLM 0회 — 검색 스택만 격리해서 본다).
+`--use-agent`를 주면 agent 노드를 먼저 돌려 에이전트가 정한 검색어를 쓴다.
+ReAct 전환 전에는 라우터가 항상 쿼리를 재작성했으므로, 그때 수치(hit@n 96.2%)와
+비교하려면 --use-agent 쪽을 봐야 한다.
 
 사용 예:
     python scripts/eval_retrieval.py
-    python scripts/eval_retrieval.py --trials 2 --questions eval_sets/qualitative_questions.jsonl
+    python scripts/eval_retrieval.py --use-agent --trials 2
 
 지표:
 - hit@n     : 기대 문서가 리랭크 확정 근거(top_n)에 들어온 비율
@@ -25,25 +30,38 @@ import argparse
 import json
 from pathlib import Path
 
+from ax_rag.query_graph.agent_tools import ACTION_SEARCH
+from ax_rag.query_graph.nodes.agent import agent
 from ax_rag.query_graph.nodes.bm25_retrieve import bm25_retrieve
 from ax_rag.query_graph.nodes.dense_retrieve import dense_retrieve
 from ax_rag.query_graph.nodes.fuse import fuse
 from ax_rag.query_graph.nodes.rerank import rerank
-from ax_rag.query_graph.nodes.router import route
 from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.logging_setup import setup_logging
 
 
-def _run_once(row: dict) -> dict:
+def _agent_query(state: dict, fallback: str) -> str:
+    """agent 노드가 정한 검색어. 검색을 안 고르면 질문 원문으로 폴백한다."""
+    delta = agent(state)
+    if str(delta.get("next_action") or "") != ACTION_SEARCH:
+        return fallback
+    return str((delta.get("next_action_args") or {}).get("query") or "") or fallback
+
+
+def _run_once(row: dict, use_agent: bool = False) -> dict:
     """문항 1건의 검색 결과 (리랭크 확정본 + 융합 후보)."""
     domain = row.get("domain", "")
+    question = row["question"]
     state: dict = {
-        "question": row["question"],
+        "question": question,
         "user_department": row.get("user_department", ""),
         "requested_domain": domain if domain in DOMAINS and domain != "GENERAL" else "",
+        "project_id": row.get("project_id", ""),
         "conversation_history": [],
     }
-    state.update(route(state))
+    query = _agent_query(state, question) if use_agent else question
+    # 라우터가 없어진 뒤로 검색어는 호출부가 정한다 (retrieval.run_search와 같은 계약)
+    state.update({"rewritten_query": query, "search_queries": [query]})
     for node in (dense_retrieve, bm25_retrieve, fuse):
         state.update(node(state))
     fused_docs = [c.get("source_doc", "") for c in state.get("retrieved_candidates") or []]
@@ -64,6 +82,11 @@ def main() -> int:
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--output-dir", default="eval_sets/results")
     parser.add_argument("--label", default="retrieval")
+    parser.add_argument(
+        "--use-agent",
+        action="store_true",
+        help="agent 노드가 정한 검색어를 쓴다 (기본: 질문 원문, LLM 0회)",
+    )
     args = parser.parse_args()
 
     rows = [
@@ -74,7 +97,10 @@ def main() -> int:
     # 기대 근거가 지정된 문항만 평가한다 (안전장치 문항은 검색 대상이 아니다)
     rows = [r for r in rows if r.get("expected_source")]
     threshold = get_config().RERANK_SCORE_THRESHOLD
-    print(f"검색 평가: {len(rows)}문항 × {args.trials}회 (임계값 {threshold})\n")
+    query_mode = "에이전트 검색어" if args.use_agent else "질문 원문"
+    print(
+        f"검색 평가: {len(rows)}문항 × {args.trials}회 (임계값 {threshold}, 검색어={query_mode})\n"
+    )
 
     results: dict[str, dict] = {}
     print(f"{'문항':<11}{'hit@n':>7}{'hit@fuse':>10}{'근거0':>7}{'최고점':>8}  검색 쿼리")
@@ -84,7 +110,7 @@ def main() -> int:
         hits, fuse_hits, empties, scores = [], [], [], []
         queries: list[str] = []
         for _ in range(args.trials):
-            out = _run_once(row)
+            out = _run_once(row, use_agent=args.use_agent)
             queries = out["queries"]
             hits.append(any(expected in d for d in out["final_docs"]))
             fuse_hits.append(any(expected in d for d in out["fused_docs"]))
@@ -115,6 +141,8 @@ def main() -> int:
         "hit_at_fuse": round(sum(r["hit_at_fuse"] for r in results.values()) / total, 3),
         "empty_rate": round(sum(r["empty_rate"] for r in results.values()) / total, 3),
         "threshold": threshold,
+        # 검색어 출처가 다르면 수치를 나란히 비교하면 안 된다
+        "query_source": "agent" if args.use_agent else "question",
     }
     print("\n=== 집계 ===")
     for key, value in summary.items():
