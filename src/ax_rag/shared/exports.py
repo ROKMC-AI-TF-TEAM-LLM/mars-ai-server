@@ -1,13 +1,11 @@
 """생성 문서(EXPORT_DIR) 저장과 임시 보관소 정리.
 
-EXPORT_DIR은 도구가 만든 파일(HWPX 등)의 임시 보관소다 — 미들웨어가
-SSE file 이벤트를 신호로 즉시 가져가 자기 저장소에 보관하므로(interfaces.md
-§5), 여기 파일은 TTL(EXPORT_TTL_HOURS, 기본 24시간)만 지나면 지워도 된다.
+EXPORT_DIR은 임시 보관소다 — 미들웨어가 SSE file 이벤트를 신호로 즉시 가져가
+자기 저장소에 보관하므로, 여기 파일은 TTL이 지나면 지워도 된다.
 
-정리는 **새 파일을 생성하는 시점에 기회적으로** 수행한다: 디렉터리가
-커지는 유일한 경로가 생성이므로 생성 시 정리만으로 크기가 유한하게
-유지된다. 별도 스케줄러·백그라운드 스레드가 필요 없어 단일 워커 전제
-(CLAUDE.md)와도 정합한다.
+정리는 **새 파일 생성 시점에 기회적으로** 한다. 디렉터리가 커지는 유일한 경로가
+생성이라 이것만으로 크기가 유한하게 유지되고, 별도 스케줄러가 필요 없어
+단일 워커 전제(CLAUDE.md)와도 맞는다.
 """
 
 from __future__ import annotations
@@ -55,16 +53,11 @@ def cleanup_expired_exports() -> int:
 def save_export_document(title: str, body: str, filename_prefix: str, tool: str) -> dict:
     """HWPX 산출물을 EXPORT_DIR에 저장하고 SSE file 이벤트 재료를 만든다.
 
-    파일을 만드는 도구 노드(hwp_export, hwp_draft)의 공통 절차다:
-    만료분 기회적 정리 → 파일명 생성 → HWPX 저장 → 다운로드 URL 조립.
-
-    파일명에 무작위 접미사를 붙이는 이유: 같은 초에 여러 건이 생성돼도
-    충돌하지 않게 하기 위해서다 (실측).
-
+    파일명의 무작위 접미사는 같은 초에 여러 건이 생성돼도 충돌하지 않게 한다.
     반환: {"name", "url", "tool"} — 노드의 generated_files 항목 그대로.
     저장 실패 시 예외를 그대로 전파한다 (호출부가 도구별 안내문으로 처리).
     """
-    cleanup_expired_exports()  # 기회적 정리: 새 파일을 만드는 시점에 만료분 삭제
+    cleanup_expired_exports()
 
     filename = f"{filename_prefix}_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.hwpx"
     path = write_hwpx(title=title, body=body, out_path=Path(get_config().EXPORT_DIR) / filename)

@@ -1,24 +1,13 @@
-"""구조화 호출 (라우터 분류·답변 검증의 공통 경로).
+"""구조화 호출 (에이전트 행동 결정·답변 검증의 공통 경로).
 
-**주 경로는 response_format=json_schema(문법 강제)다.** 서빙이 디코딩 단계에서
-스키마를 강제하므로 모델이 tool-call을 낼 능력이 없어도 구조화 출력이 보장된다.
-llama.cpp·vLLM 모두 지원한다.
+**주 경로는 response_format=json_schema(문법 강제)다.** 디코딩 단계에서 스키마를
+강제하므로 모델이 tool-call을 낼 능력이 없어도 구조화 출력이 보장된다.
 
-tool-call을 주 경로에서 내린 이유 (실측):
-A.X-4.0-Light는 **문서가 200자만 넘어도** tool-call 대신 "VerifyAnswer 도구를
-사용하여 …확인하겠습니다" 같은 산문을 낸다 (100자는 성공, 200자부터 0/3 실패).
-컨텍스트 여유(12,288 중 339토큰)와 무관한 모델 자체의 한계이고, llama.cpp의
-chat_template_caps는 supports_tools=true로 정상 인식하며 tool_choice 네 형태가
-짧은 입력에서는 모두 동작하므로 설정 문제가 아니다.
+A.X-4.0-Light는 문서가 200자만 넘어도 tool-call 대신 산문을 낸다 — 모델 자체의
+한계이고 설정 문제가 아니다 (docs/experiments.md 실험 8·9).
 
-같은 근거(3,196토큰)에서의 성공률:
-    tool_choice=함수         0/3   산문 출력
-    response_format=json_object  0/3   "grounded=true" 평문 (JSON 아님)
-    response_format=json_schema  3/3   ✅
-
-폴백은 json_schema 미지원 서빙을 위해 남긴다: tool-call → JSON 강제 재시도.
-전부 실패하면 None을 반환하며, 호출부의 안전장치(라우터: 원본 질문 폴백,
-검증: fail-closed)가 그대로 동작한다.
+폴백은 json_schema 미지원 서빙용으로 남긴다: tool-call → JSON 강제 재시도.
+전부 실패하면 None을 반환하며 호출부의 안전장치(검증: fail-closed)가 동작한다.
 """
 
 from __future__ import annotations
@@ -38,16 +27,13 @@ logger = get_logger(__name__)
 # 본문 중 가장 바깥 중괄호 블록 (```json 펜스 유무 무관)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
-# 구조화 호출 출력 상한. 라우터/검증의 정상 출력은 짧은 JSON이므로, 모델이
-# tool-call을 무시하고 질문에 장문으로 답하는 폭주(46초 생성 실측)를 토큰
+# 정상 출력은 짧은 JSON이므로, 모델이 질문에 장문으로 답하는 폭주를 토큰
 # 수준에서 차단한다. 잘려도 재시도 단계가 이어받는다
 _STRUCTURED_MAX_TOKENS = 512
-# JSON 강제 재시도는 순수 JSON만 기대하므로 더 짧게
-_RETRY_MAX_TOKENS = 256
+_RETRY_MAX_TOKENS = 256  # 재시도는 순수 JSON만 기대하므로 더 짧게
 
-# 스키마 타입별 자리표시 값 (_retry_example의 일반 합성용).
-# boolean이 False인 이유: 작은 모델이 예시를 앵무새처럼 복사해도
-# 안전한 방향(fail-closed)으로 떨어지게 한다 (VerifyAnswer.grounded 등)
+# boolean 자리표시가 False인 이유: 작은 모델이 예시를 복사해도
+# 안전한 방향(fail-closed)으로 떨어지게 한다
 _PLACEHOLDERS: dict[str, object] = {
     "string": "<값>",
     "boolean": False,
@@ -66,22 +52,13 @@ def _placeholder(prop: dict) -> object:
 def json_schema_format(schema: type[BaseModel]) -> dict:
     """pydantic 스키마를 OpenAI 호환 response_format(json_schema)으로 바꾼다.
 
-    ClassVar(RETRY_EXAMPLE 등)는 pydantic이 알아서 제외한다.
-    additionalProperties=False는 스키마 밖 필드를 막아 파싱을 단순하게 한다.
+    ★ **모든 속성을 required로 올린다.** pydantic은 기본값 있는 필드를 required에서
+    빼는데, 문법 강제 디코딩에서는 그것이 관용이 아니라 **면제**가 된다 — 모델이
+    안 채워도 문법이 통과시킨다. 이것 때문에 부분 수용(unsupported)과 판단 근거
+    스트리밍(thought)이 죽어 있었다 (docs/experiments.md 실험 11).
 
-    ★ **모든 속성을 required로 올린다.** pydantic은 기본값이 있는 필드를
-    required에서 빼는데, 주 경로가 문법 강제 디코딩이 된 뒤로는 그것이 관용이
-    아니라 **면제**가 된다 — 모델이 그 필드를 아예 안 채워도 문법이 통과시킨다.
-    실측 피해 2건:
-      - VerifyAnswer.unsupported가 늘 비어 와서 **부분 수용이 죽어 있었다**
-        (근거 없는 문장만 덜어내는 안전망이 한 번도 발동하지 못함)
-      - AgentAction.thought가 늘 비어 와서 판단 근거 스트리밍이 기본 문구만 나갔다
-    스키마에 노출되는 `"default": ""`가 작은 모델에게 "비워도 된다"는 신호로
-    읽히는 문제도 함께 없앤다. strict=true는 원래 모든 속성이 required여야
-    하므로(OpenAI 계약) 규격에도 더 맞는다.
-
-    파싱은 그대로 관대하다: pydantic 쪽 기본값은 남아 있어, 문법 강제가 없는
-    폴백 경로(tool-call·JSON 강제)에서 모델이 키를 빠뜨려도 검증에 걸리지 않는다.
+    파싱은 그대로 관대하다: pydantic 기본값이 남아 있어 폴백 경로에서 키가
+    빠져도 검증에 걸리지 않는다.
     """
     json_schema = schema.model_json_schema()
     json_schema["additionalProperties"] = False
@@ -95,10 +72,8 @@ def json_schema_format(schema: type[BaseModel]) -> dict:
 def _retry_example(schema: type[BaseModel]) -> str:
     """재시도 프롬프트용 예시 JSON 문자열.
 
-    스키마 정의(properties JSON)를 그대로 보여주면 작은 모델이 타입 정의를
-    값처럼 복사해 반환한다 (실측: {"rewritten_query": {"title": ...}}).
-    예시 형태로 주면 값 채우기로 따라온다. 스키마 클래스에 RETRY_EXAMPLE
-    (ClassVar dict)이 있으면 그것을 쓰고, 없으면 타입별 자리표시로 합성한다.
+    스키마 정의를 그대로 보여주면 작은 모델이 타입 정의를 값처럼 복사한다.
+    RETRY_EXAMPLE(ClassVar)이 있으면 쓰고, 없으면 자리표시로 합성한다.
     """
     example = getattr(schema, "RETRY_EXAMPLE", None)
     if example is None:

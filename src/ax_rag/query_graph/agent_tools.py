@@ -1,22 +1,15 @@
 """ReAct 에이전트의 행동 레지스트리와 관측(observation) 포매팅.
 
-기존 도구 레지스트리(tools.py)를 대체하지 않고 **덧입힌다**: 실행 함수는
-tools.TOOL_NODES의 것을 그대로 쓰고, 여기서는 에이전트가 부르는 행동 이름과
-실행 시점(phase), 그리고 행동 어휘로 다시 쓴 설명을 얹는다.
+tools.py를 대체하지 않고 덧입힌다: 실행 함수는 TOOL_NODES를 그대로 쓰고,
+여기서는 행동 이름·실행 시점(phase)·행동 어휘로 다시 쓴 설명을 얹는다.
 
-설명만 따로 두는 이유는 AgentTool.description 주석에 적었다 — 라우터용
-설명에는 intent 이름(DOC_SEARCH 등)이 본문에 섞여 있어 그대로 보여주면
-모델이 행동 이름 대신 그 값을 출력한다.
-
-실행 시점(phase):
+실행 시점:
 - inline   — 루프 안에서 즉시 실행하고 결과를 관측으로 돌려준다
-- deferred — verify 통과 **후**에 실행한다. "방금 만든 답변"을 입력으로
-  쓰는 도구(파일 저장)가 여기 속한다. 검증 실패 시 실행되지 않는다
+- deferred — verify 통과 **후** 실행. 검증 실패 시 실행되지 않는다
   (fail-closed: 검증 못 받은 답변을 파일로 만들지 않는다)
 
-관측은 요약본이다. 근거 전문은 상태(retrieved_chunks)에 쌓고 에이전트에게는
-발췌만 보여준다 — 스크래치패드가 부풀면 16K 예산이 깨진다
-(docs/react_migration_plan.md §4 D2).
+관측은 요약본이다. 근거 전문은 retrieved_chunks에 쌓고 에이전트에게는 발췌만
+보여준다 — 스크래치패드가 부풀면 16K 예산이 깨진다.
 """
 
 from __future__ import annotations
@@ -51,11 +44,9 @@ class AgentTool:
     name: str  # LLM이 action 값으로 쓰는 이름
     intent: str  # tools.py 레지스트리 키 (합성 순서·진행 문구가 이 값을 쓴다)
     node: Callable[[dict], dict]  # 실행 함수 (tools.TOOL_NODES 재사용)
-    # 에이전트 프롬프트용 설명. tools.TOOL_DESCRIPTIONS를 그대로 쓰지 않는다 —
-    # 그쪽은 라우터용이라 본문에 "DOC_SEARCH", "HWP_EXPORT" 같은 **intent 이름**이
-    # 섞여 있어서, 그대로 보여주면 모델이 행동 이름 대신 intent 이름을 출력한다
-    # (action="DOC_SEARCH" → 미지의 행동 → 검색이 통째로 사라진다).
-    # 분류 기준 자체는 같게 유지하고 어휘만 행동 이름으로 옮긴다
+    # 에이전트 프롬프트용 설명. TOOL_DESCRIPTIONS(라우터용)를 쓰면 안 된다 —
+    # 본문에 intent 이름이 섞여 있어 모델이 행동 이름 대신 그 값을 출력한다
+    # (action="DOC_SEARCH" → 미지의 행동 → 검색이 통째로 사라진다)
     description: str
 
     @property
@@ -65,9 +56,8 @@ class AgentTool:
         return PHASE_DEFERRED if self.intent in POST_SEARCH_TOOLS else PHASE_INLINE
 
 
-# 행동 이름 → 명세. SMALLTALK은 여기 없다 — 에이전트가 도구 없이 finish하면
-# direct_answer 노드가 그 역할을 한다 (도구로 두면 "잡담을 실행"이라는
-# 어색한 행동이 생기고, 업무 답변과 합성될 위험도 생긴다)
+# 행동 이름 → 명세. SMALLTALK은 없다 — 도구 없이 finish하면 direct_answer가
+# 그 역할을 한다 (도구로 두면 업무 답변과 합성될 위험이 생긴다)
 AGENT_TOOLS: dict[str, AgentTool] = {
     "discharge_days": AgentTool(
         name="discharge_days",
@@ -107,9 +97,8 @@ AGENT_TOOLS: dict[str, AgentTool] = {
 # intent 값 → 행동 이름 (강제 지정·결정적 매처가 intent로 들어온다)
 INTENT_TO_ACTION: dict[str, str] = {tool.intent: name for name, tool in AGENT_TOOLS.items()}
 
-# 7B 허용 오차: 모델이 행동 이름 대신 intent 이름이나 흔한 변형을 낼 때의 보정.
-# 라우터가 문자열 intents·단수형 intent를 보정해 받는 것과 같은 취지다 —
-# 형태가 살짝 어긋났다고 검색을 통째로 잃는 것이 훨씬 큰 손해다
+# 7B 허용 오차: 모델이 intent 이름이나 흔한 변형을 낼 때의 보정.
+# 형태가 살짝 어긋났다고 검색을 통째로 잃는 쪽이 훨씬 큰 손해다
 ACTION_ALIASES: dict[str, str] = {
     "doc_search": ACTION_SEARCH,
     "search": ACTION_SEARCH,
@@ -139,8 +128,7 @@ def resolve_action(raw: str) -> str:
 def action_guide() -> str:
     """에이전트 시스템 프롬프트의 행동 목록 (레지스트리에서 생성).
 
-    도구를 추가하면 프롬프트가 자동으로 따라온다 — 라우터 프롬프트가
-    TOOL_DESCRIPTIONS에서 생성되던 것과 같은 방식이다.
+    도구를 추가하면 프롬프트가 자동으로 따라온다.
     """
     lines = [
         f"- {ACTION_SEARCH}: 군 내부 문서를 검색한다. query에 검색어를 넣는다 "
@@ -152,11 +140,7 @@ def action_guide() -> str:
 
 
 def _wrap(body: str) -> str:
-    """관측을 delimiter로 감싼다 (인젝션 방어면 — 프롬프트가 '데이터로만 취급'을 지시).
-
-    상한을 넘으면 자른다. 에이전트는 "무엇이 잡혔는지"만 알면 되고,
-    답변 작성에 쓰이는 근거 전문은 상태에 따로 쌓여 있다.
-    """
+    """관측을 delimiter로 감싼다 (인젝션 방어면). 상한을 넘으면 자른다."""
     trimmed = body.strip()
     if len(trimmed) > MAX_OBSERVATION_CHARS:
         trimmed = trimmed[:MAX_OBSERVATION_CHARS].rstrip() + "…"

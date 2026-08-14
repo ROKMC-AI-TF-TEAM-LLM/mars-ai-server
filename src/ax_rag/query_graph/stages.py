@@ -1,14 +1,11 @@
 """그래프 노드 이름과 진행 상태(SSE status) 안내 문구.
 
-노드 이름을 API 계층이 문자열로 알고 있으면, 노드 이름을 바꿨을 때
-진행 안내가 조용히 사라진다 (테스트도 못 잡는다). 그래서 노드 이름 상수와
-"이 노드가 끝나면 다음은 무엇인가"의 판단을 그래프 쪽에 둔다 —
-graph.py가 노드를 등록할 때 쓰는 이름과 같은 상수를 여기서 쓴다.
+API 계층이 노드 이름을 문자열로 알고 있으면 이름을 바꿨을 때 진행 안내가
+조용히 사라진다 (테스트도 못 잡는다). 그래서 이름 상수와 단계 판단을 그래프
+쪽에 둔다.
 
-status 이벤트의 stage 값("retrieve", "rerank", ...)은 미들웨어·프론트와의
-계약이다 (interfaces.md §5, POST /query 응답 문서). 노드 이름과 별개이며
-바꾸면 프론트 표시가 깨진다. **ReAct 루프에서도 stage 허용값은 늘어나지
-않는다** — 같은 값이 여러 번 나갈 뿐이며, 계약은 이미 "status 0회 이상"이다.
+stage 값은 미들웨어·프론트와의 계약이다 (interfaces.md §5) — 바꾸면 프론트
+표시가 깨진다. ReAct 루프에서도 허용값은 늘지 않고 같은 값이 여러 번 나갈 뿐이다.
 """
 
 from __future__ import annotations
@@ -47,8 +44,8 @@ _GENERATE_MESSAGE = "답변을 생성하는 중..."
 def _agent_stage_status(state: QueryState) -> tuple[str, str] | None:
     """agent가 정한 다음 행동을 보고 진행 안내를 만든다.
 
-    agent 노드가 끝난 시점에는 행동이 정해졌지만 아직 실행되지 않았다 —
-    그래서 "행동을 설명한 뒤 행동한다"는 순서가 그래프 구조상 보장된다.
+    agent 완료 시점에는 행동이 정해졌지만 아직 실행 전이라, "설명한 뒤
+    행동한다"는 순서가 그래프 구조상 보장된다.
     """
     action = str(state.get("next_action") or "")
     if action == ACTION_SEARCH:
@@ -101,13 +98,8 @@ def status_after_node(node_name: str, state: QueryState) -> tuple[str, str] | No
 def status_event_payload(node_name: str, state: QueryState) -> dict | None:
     """SSE status 이벤트 페이로드. 보낼 것이 없으면 None.
 
-    stage·message는 status_after_node가 정하고, 여기서는 ReAct의 판단 근거
-    (thought)와 라운드 번호를 **선택 필드로 얹는다**. 미들웨어가 모르는 필드를
-    무시하면 현행과 완전히 같은 동작이 된다 — 그래서 계약을 깨지 않는다
-    (docs/react_migration_plan.md §5.2).
-
-    thought는 agent 노드에서만 싣는다. 다른 노드에도 실으면 이미 지나간
-    판단이 반복 표시된다.
+    thought·step은 **선택 필드**라 미들웨어가 무시하면 현행과 같게 동작한다.
+    thought는 agent 노드에서만 싣는다 (다른 노드에도 실으면 지나간 판단이 반복된다).
     """
     status = status_after_node(node_name, state)
     if status is None:
