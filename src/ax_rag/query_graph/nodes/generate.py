@@ -15,6 +15,7 @@ from ax_rag.query_graph.prompts import (
     GENERATE_TOOL_HANDLED_TEMPLATE,
     GENERATE_USER_TEMPLATE,
     format_documents,
+    format_instructions,
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
@@ -50,6 +51,8 @@ def generate(state: QueryState) -> dict:
     user_prompt = (
         GENERATE_USER_TEMPLATE.format(
             documents=format_documents(chunks),
+            # 지침은 근거와 질문 **사이**에 들어간다 (템플릿이 순서를 고정한다)
+            instructions=format_instructions(state),
             question=state["question"],
             rewritten_query=state.get("rewritten_query") or state["question"],
         )

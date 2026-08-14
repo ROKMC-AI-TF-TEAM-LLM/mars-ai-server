@@ -13,7 +13,7 @@ import re
 
 from ax_rag.indexer_graph.loaders import SUPPORTED_SUFFIXES
 from ax_rag.query_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_NODES
-from ax_rag.shared.config import DOMAINS
+from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -27,6 +27,43 @@ _PROJECT_ID_MAX_CHARS = 64
 # project_id 허용 문자 — acl._sanitize와 같은 집합.
 # 여기서 미리 거르면 "정제되어 조용히 다른 프로젝트가 되는" 상황을 없앤다
 _PROJECT_ID_ALLOWED = re.compile(r"^[0-9A-Za-z_\-]+$")
+
+# 프로젝트 지침 길이 상한 (약 450토큰 — 검색 예산 5,000토큰 대비 감당 가능).
+# 초과분은 자른다. 지침 때문에 근거가 밀려나면 안 된다
+_INSTRUCTIONS_MAX_CHARS = 1000
+
+# 태그 형태 문자열 제거용. 지침은 <instructions> delimiter 안에 들어가므로,
+# 사용자가 "</instructions>"를 적어 블록을 탈출하는 것을 막아야 한다.
+# 여는 꺾쇠에 대응하는 닫는 꺾쇠가 있을 때만 매칭되므로 "5 < 10" 같은 표현은 남는다
+_TAG_LIKE = re.compile(r"<[^>]{0,120}>")
+
+
+def normalize_project_instructions(value: str) -> str:
+    """프로젝트 지침 정규화. 빈 값이면 "".
+
+    delimiter 탈출을 막고 길이를 제한한다. 내용 자체는 검열하지 않는다.
+
+    ⚠️ config.PROJECT_INSTRUCTIONS_ENABLED가 꺼져 있으면 항상 ""를 돌려준다.
+    실측에서 지침이 근거 규칙을 이겼기 때문이다 (docs/experiments.md 실험 14) —
+    프롬프트의 우선순위 선언만으로는 막지 못한다.
+    """
+    if not get_config().PROJECT_INSTRUCTIONS_ENABLED:
+        if (value or "").strip():
+            logger.info("프로젝트 지침이 전달됐으나 비활성 설정이라 무시한다")
+        return ""
+    text = (value or "").strip()
+    if not text:
+        return ""
+    cleaned = _TAG_LIKE.sub(" ", text)
+    cleaned = re.sub(r"\s{3,}", "  ", cleaned).strip()
+    if len(cleaned) > _INSTRUCTIONS_MAX_CHARS:
+        logger.warning(
+            "프로젝트 지침이 상한을 넘어 자른다 (%d자 → %d자)",
+            len(cleaned),
+            _INSTRUCTIONS_MAX_CHARS,
+        )
+        cleaned = cleaned[:_INSTRUCTIONS_MAX_CHARS].rstrip()
+    return cleaned
 
 
 def normalize_project_id(value: str) -> str:

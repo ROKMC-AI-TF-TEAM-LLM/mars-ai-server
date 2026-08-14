@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import (
     KNOWLEDGE_ANSWER_SYSTEM_PROMPT,
+    format_instructions,
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
@@ -48,7 +49,7 @@ def generate_knowledge_answer(state: QueryState) -> str:
                 [
                     SystemMessage(KNOWLEDGE_ANSWER_SYSTEM_PROMPT),
                     *history_to_messages(history),
-                    HumanMessage(state["question"]),
+                    HumanMessage(format_instructions(state) + state["question"]),
                 ]
             )
         )

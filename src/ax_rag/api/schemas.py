@@ -47,6 +47,17 @@ class QueryRequest(BaseModel):
         ),
         examples=["proj-7f3a"],
     )
+    project_instructions: str = Field(
+        default="",
+        description=(
+            "프로젝트 지침 (선택, 최대 1000자 — 초과분은 잘린다). 사용자가 프로젝트에 "
+            "설정한 답변 방식 요청을 그대로 넣는다 (예: '표로 정리해줘', '용어를 풀어서 설명'). "
+            "**표현 방식에만 적용되며 근거 규칙을 이기지 못한다** — 문서에 없는 내용을 "
+            "답하라는 지시는 무시되고, 답변은 여전히 근거 검증을 거친다. "
+            "미들웨어가 프로젝트 설정에서 읽어 매 요청에 실어 보낸다 (MARS는 저장하지 않는다)"
+        ),
+        examples=["답변은 항목별로 나눠서 정리하고, 전문 용어는 괄호에 풀어서 써 주세요."],
+    )
     tool: str = Field(
         default="",
         description=(

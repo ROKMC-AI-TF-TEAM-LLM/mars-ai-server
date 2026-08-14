@@ -12,6 +12,7 @@ from ax_rag.query_graph.budget import trim_history
 from ax_rag.query_graph.prompts import (
     SMALLTALK_DEFAULT_ANSWER,
     SMALLTALK_SYSTEM_PROMPT,
+    format_instructions,
     history_to_messages,
 )
 from ax_rag.query_graph.state import QueryState
@@ -40,7 +41,7 @@ def smalltalk(state: QueryState) -> dict:
                 [
                     SystemMessage(SMALLTALK_SYSTEM_PROMPT),
                     *history_to_messages(history),
-                    HumanMessage(state["question"]),
+                    HumanMessage(format_instructions(state) + state["question"]),
                 ]
             )
         )
