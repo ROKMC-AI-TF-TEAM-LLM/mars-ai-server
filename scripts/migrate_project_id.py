@@ -93,10 +93,11 @@ def main() -> int:
         logger.info("--dry-run: 여기서 중단한다 (변경 없음)")
         return 0
 
-    # 백업: 드롭 후 실패하면 이 파일로 복구한다 (임베딩까지 들어 있어 용량이 크다)
+    # 백업: 드롭 후 실패하면 이 파일로 복구한다 (임베딩까지 들어 있어 용량이 크다).
+    # default=float은 임베딩이 numpy.float32로 오는 것을 파이썬 float으로 낮춘다
     backup_path = Path(args.backup)
     backup_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_path.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    backup_path.write_text(json.dumps(rows, ensure_ascii=False, default=float), encoding="utf-8")
     logger.info("백업 저장: %s (%.1fMB)", backup_path, backup_path.stat().st_size / 1024 / 1024)
 
     logger.info("컬렉션을 새 스키마로 재생성한다 (drop → create)")
