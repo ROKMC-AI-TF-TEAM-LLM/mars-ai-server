@@ -61,17 +61,25 @@ _QUERY_RESPONSES = {
             "SSE 스트림 (`data: {JSON}\\n\\n` 프레임). 이벤트 순서:\n\n"
             '1. `{"type": "status", "stage": str, "message": str}` — 진행 상태 안내, '
             '0회 이상 (예: "군 내부 문서를 검색하는 중..."). stage 값: '
-            "route(질문 분석·계획 수립) | tool(도구 실행, 도구별 문구) | "
-            "retrieve | rerank | generate | verify\n"
+            "route | tool(도구 실행, 도구별 문구) | retrieve | generate | verify. "
+            '에이전트가 판단한 직후에는 **선택 필드** `"thought"`(판단 근거 한 문장)와 '
+            '`"step"`(라운드 번호)이 함께 실린다 — 모르는 필드는 무시해도 동작에 지장이 '
+            "없다 (서버 설정 STREAM_THOUGHTS로 끌 수 있다)\n"
             '2. `{"type": "text", "content": str}` — 답변 조각, N회 '
             "(문장 단위, STREAM_TEXT_INTERVAL_MS 간격)\n"
             '3. `{"type": "file", "name": str, "url": str, "tool": str}` — '
             "도구가 생성한 파일(HWPX 등), 0회 이상. **미들웨어는 이 이벤트를 "
             "신호로 파일을 가져가 저장**한다 (답변 텍스트 파싱 불필요)\n"
-            '4. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
+            '4. `{"type": "notice", "level": "warning", "code": str, "message": str}` — '
+            "**답변 자체에 대한 경고**, 0~1회. 현재 code는 `ungrounded_knowledge` 하나로, "
+            "문서 근거를 찾지 못해 **AI 일반 지식으로 작성한 답변**이라는 뜻이다 "
+            "(검증을 거치지 않았고 sources는 빈 배열). **프론트는 이 답변을 일반 답변과 "
+            "시각적으로 구분해 표시해야 한다** — 표시하지 않으면 근거 없는 내용이 "
+            "일반 답변처럼 보인다. code를 모르면 message를 그대로 띄우면 된다\n"
+            '5. `{"type": "sources", "items": [{"name": str, "page": null}]}` — '
             "정확히 1회. 근거 검증(verify)을 통과한 답변에만 문서가 담기며, "
-            "fallback·잡담 응답은 빈 배열\n"
-            '5. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
+            "fallback·잡담·지식 기반 응답은 빈 배열\n"
+            '6. `{"type": "done"}` — 종료 신호, 항상 마지막\n\n'
             '파이프라인 예외 시: `{"type": "error", "message": str}` → done. '
             "fallback 답변은 error가 아니라 정상 text로 전송된다. "
             "클라이언트는 미지의 type을 무시하도록 구현할 것 (향후 확장 대비)."
@@ -106,6 +114,9 @@ async def query(request: QueryRequest, http_request: Request) -> StreamingRespon
       빈 값/"ALL"이면 전 도메인
     - `tool`을 지정하면 라우터 분류 없이 해당 경로로 강제 직행한다 (잡담 예외 없음)
     - `user_department` 누락 시 visibility=ALL 문서만 검색된다
+    - `project_id`를 지정하면 **전사 문서 + 그 프로젝트 문서**를 검색한다.
+      비우면 전사 문서만 검색하며 프로젝트 문서는 노출되지 않는다.
+      ⚠️ **멤버십 검증은 미들웨어 책임** — 본 서버는 받은 값을 그대로 신뢰한다
     - **생성 중지**: 별도 API 없음. 클라이언트가 SSE 연결을 중단(abort)하면
       서버가 노드 경계에서 감지해 이후 단계를 실행하지 않는다.
       미들웨어는 프론트 연결 중단 시 본 서버로의 요청도 함께 중단해야 한다
