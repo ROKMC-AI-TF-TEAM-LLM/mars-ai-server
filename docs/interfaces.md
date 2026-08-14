@@ -23,17 +23,29 @@
 - `domain`: VARCHAR(32) — config.DOMAINS 중 하나
 - `owning_department`: VARCHAR(32) — ACL 소유 부서
 - `visibility`: VARCHAR(16) — `"ALL"` | `"DEPT_ONLY"`
+- `project_id`: VARCHAR(64) — **프로젝트 격리**. `""`=전사 공용, 그 외=해당 프로젝트 전용.
+  일반 채팅은 `""`만 검색하고, 프로젝트 채팅은 `""` + 자기 프로젝트를 검색한다.
+  프로젝트 문서의 접근 통제는 이 필드가 담당하므로 `visibility`는 `"ALL"`로 둔다
 - `doc_classification`: VARCHAR(16) — **예약 필드**. 현재는 항상 `"NORMAL"` 기록.
   향후 문서 등급(대외비 등) 및 사용자 신원등급 매칭용. 삭제 금지
 - `created_at`: INT64 — unix timestamp
 
 인덱스: HNSW, `metric_type=COSINE`, `params={"M": 16, "efConstruction": 200}`
 
+> **스키마 변경 시 마이그레이션**: `milvus-lite`는 기존 컬렉션에 필드를 추가할 수
+> 없다 (Milvus 2.5+ 기능). `scripts/migrate_project_id.py`가 기존 청크를 **임베딩까지
+> 읽어와 새 스키마로 다시 넣는** 방식을 쓴다 — 재임베딩·PDF 재파싱이 없어
+> 청킹 결과가 달라질 위험이 없고, `chunk_id`·`parent_id`가 보존되므로
+> `document_parents`와 BM25 인덱스를 손대지 않아도 된다.
+
 ### 부모 청크 컬렉션 `document_parents` (벡터 인덱스 없음)
 
 - `parent_id`: VARCHAR(64), PK, uuid4 hex
 - `parent_text`: VARCHAR(8000) — 800~1,200토큰 분량 (한국어 여유 8000자)
 - `source_doc`: VARCHAR(512)
+
+부모 청크에는 ACL·`project_id`가 없다. `parent_id`로만 조회되고, 그 `parent_id`는
+이미 ACL·프로젝트 필터를 통과한 자식 청크에서만 나오기 때문이다.
 
 ## 3. TypedDict 스키마
 
