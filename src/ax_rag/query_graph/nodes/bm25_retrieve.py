@@ -26,6 +26,7 @@ def bm25_retrieve(state: QueryState) -> dict:
     scope = state.get("requested_domain") or "GENERAL"  # GENERAL=도메인 제한 없음
     top_k = get_config().SEARCH_TOP_K
     department = state.get("user_department", "")
+    project_id = state.get("project_id") or ""
 
     candidates: list[dict] = []
     raw_total = 0
@@ -35,7 +36,7 @@ def bm25_retrieve(state: QueryState) -> dict:
         if not raw_results:
             continue
         # ACL 후처리는 쿼리마다 반드시 적용한다 (우회 경로를 만들지 않는다)
-        filtered = filter_by_acl(raw_results, scope, department)
+        filtered = filter_by_acl(raw_results, scope, department, project_id)
         candidates.extend({**item, "query_index": index} for item in filtered[:top_k])
 
     if not candidates:
