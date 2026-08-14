@@ -174,12 +174,13 @@ def test_스위치가_꺼져_있으면_지침이_무시된다(monkeypatch: pytes
         get_config.cache_clear()
 
 
-def test_기본값은_비활성이다(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_스위치로_즉시_끌_수_있다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """운영 중 문제가 관찰되면 코드 배포 없이 차단할 수 있어야 한다."""
     from ax_rag.shared.config import get_config
 
     monkeypatch.delenv("PROJECT_INSTRUCTIONS_ENABLED", raising=False)
     get_config.cache_clear()
     try:
-        assert get_config().PROJECT_INSTRUCTIONS_ENABLED is False
+        assert get_config().PROJECT_INSTRUCTIONS_ENABLED is True  # 기본 활성
     finally:
         get_config.cache_clear()

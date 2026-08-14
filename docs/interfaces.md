@@ -70,6 +70,7 @@ class QueryState(TypedDict):
     user_department: str
     requested_domain: Optional[str]              # 요청이 명시한 검색 도메인 한정 (빈 값=전체)
     project_id: Optional[str]                    # 빈 값=전사만, 값=전사+그 프로젝트 (검증은 미들웨어)
+    project_instructions: Optional[str]          # 프로젝트 지침 (generate·잡담·지식답변에만, verify 제외)
     intent: Optional[str]                        # 요청 tool 필드의 강제 경로 (없으면 에이전트가 판단)
     intents: Optional[list[str]]                 # 실행된 경로 기록. 순서 = 최종 답변 합성 순서
     tool_answers: Optional[list[dict]]           # 도구 실행 결과 누적 [{"intent": str, "answer": str}]
@@ -177,12 +178,15 @@ def log_query(user_department: str, question: str, domain: str,
               sources: list[str], grounded: bool,
               answer_mode: str | None = None,
               project_id: str = "",
+              has_instructions: bool = False,
               tool_calls: list[dict] | None = None,
               agent_steps: int = 0) -> None:
     """JSONL append. 경로는 config.AUDIT_LOG_PATH.
     answer_mode는 답변 경로 — grounded만으로는 "검증 실패"와
     "근거 없이 LLM 지식으로 답함"이 구분되지 않는다.
     project_id는 실제 적용된 프로젝트 범위 (""=전사).
+    has_instructions는 프로젝트 지침이 프롬프트에 실렸는지 (본문은 미기록) —
+    지침이 답변 품질에 미치는 영향을 사후 관찰하는 유일한 재료다.
     tool_calls/agent_steps는 ReAct 루프의 행동 기록
     ([{"step","action","thought","query"}]) — 재검색이 실제로 회복을
     만들어내는지 사후 확인하는 유일한 자료다."""
@@ -233,6 +237,7 @@ async def stream_answer(final_answer: str, sources: list[dict],
   "user_department": "TECH",
   "domain": "",
   "project_id": "",
+  "project_instructions": "",
   "messages": [
     {"role": "human", "content": "육아휴직에 대해 알려줘"},
     {"role": "ai", "content": "육아휴직은 최대 1년까지..."}
@@ -249,6 +254,13 @@ async def stream_answer(final_answer: str, sources: list[dict],
   > 🚨 **`project_id`의 멤버십 검증은 미들웨어 책임이다.** MARS는 요청에 실린 값을
   > 신뢰한다 (`user_department`와 동일 신뢰 모델). 미들웨어가 검증하지 않으면
   > 사용자가 임의의 `project_id`를 보내 **남의 프로젝트 문서를 읽을 수 있다.**
+- `project_instructions`(선택, 최대 1000자): 프로젝트 지침. 답변 생성·잡담·지식 답변에
+  `<instructions>` 태그로 감싸 전달되며, **검증(verify)에는 적용되지 않는다.**
+  태그 형태 문자열은 제거된다 (블록 탈출 방지). 서버 설정
+  `PROJECT_INSTRUCTIONS_ENABLED=false`면 전달돼도 무시된다.
+  > ⚠️ **지침은 근거 규칙을 이길 수 있다.** "지어내서라도 답하라"류 지침에서
+  > 절차 창작 4/4, 그중 3/4이 verify를 통과했다 (`experiments.md` 실험 14).
+  > 통제는 입력 단계 안내로 한다 — `middleware_migration.md`의 "운영 규칙" 참조.
 - `messages`의 role은 미들웨어 규약 `"human"` | `"ai"`.
   main.py 경계에서 내부 표현 `"user"` | `"assistant"`로 변환한다
   (QueryState.conversation_history는 내부 표현 유지)
