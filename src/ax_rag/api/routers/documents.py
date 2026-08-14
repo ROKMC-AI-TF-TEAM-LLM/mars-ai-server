@@ -13,12 +13,13 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi import Path as PathParam
 
-from ax_rag.api.normalize import validate_upload
+from ax_rag.api.normalize import validate_project_id_strict, validate_upload
 from ax_rag.api.schemas import (
     DocumentDeleteOutput,
     DocumentItem,
     DocumentListOutput,
     IngestJobStatus,
+    ProjectDeleteOutput,
 )
 from ax_rag.indexer_graph import ingest
 from ax_rag.shared import vectorstore
@@ -57,17 +58,30 @@ def list_documents(
     offset: Annotated[int, Query(ge=0, description="건너뛸 문서 수")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="한 번에 반환할 문서 수")] = 20,
     domain: Annotated[str | None, Query(description="도메인 필터 (예: HR)")] = None,
+    project_id: Annotated[
+        str | None,
+        Query(
+            description=(
+                '프로젝트 필터. 값을 주면 그 프로젝트 문서만, "" 를 주면 전사 공용 문서만. '
+                "생략하면 전부 (관리용이므로 프로젝트 문서도 함께 나온다)"
+            )
+        ),
+    ] = None,
 ) -> DocumentListOutput:
     all_documents = vectorstore.list_documents()
     if domain:
         wanted = domain.strip().upper()
         all_documents = [d for d in all_documents if d["domain"] == wanted]
+    if project_id is not None:
+        scope = project_id.strip()
+        all_documents = [d for d in all_documents if (d.get("project_id") or "") == scope]
 
     total = len(all_documents)
     page = all_documents[offset : offset + limit]
     logger.info(
-        "문서 목록 조회: domain=%s, offset=%d, limit=%d → %d/%d건",
+        "문서 목록 조회: domain=%s, project=%s, offset=%d, limit=%d → %d/%d건",
         domain or "(전체)",
+        "(전체)" if project_id is None else (project_id or "전사"),
         offset,
         limit,
         len(page),
@@ -85,6 +99,7 @@ def list_documents(
                 domain=doc["domain"],
                 visibility=doc["visibility"],
                 owning_department=doc["owning_department"],
+                project_id=doc.get("project_id") or "",
                 applied_at=datetime.fromtimestamp(doc["applied_at"]),
             )
             for doc in page
@@ -313,6 +328,44 @@ def delete_document(
         raise HTTPException(status_code=404, detail=f"적재된 문서가 아니다: {decoded}")
     return DocumentDeleteOutput(
         name=decoded,
+        deleted_chunks=result["deleted_children"],
+        deleted_parents=result["deleted_parents"],
+    )
+
+
+@router.delete(
+    "/projects/{project_id}",
+    tags=["문서 관리"],
+    response_model=ProjectDeleteOutput,
+    summary="프로젝트 문서 일괄 삭제",
+    description=(
+        "프로젝트에 속한 문서를 전부 삭제하고 BM25 인덱스를 한 번 재빌드한다.\n\n"
+        "- **전사 공용 문서는 지우지 않는다** (project_id가 빈 문서는 대상이 아니다)\n"
+        "- **동기 처리**: BM25 전체 재빌드 때문에 수 초~수십 초 걸릴 수 있다\n"
+        "- 404: 그 프로젝트에 적재된 문서가 없음, 409: 다른 적재/삭제 진행 중\n\n"
+        "⚠ 되돌릴 수 없다."
+    ),
+)
+def delete_project(
+    project_id: Annotated[str, PathParam(description="프로젝트 ID (예: proj-7f3a)")],
+) -> ProjectDeleteOutput:
+    # 빈 값이면 전사 문서 전체가 대상이 되므로 형식 검증을 엄격히 한다
+    try:
+        scope = validate_project_id_strict(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        result = ingest.delete_project(scope)
+    except ingest.IngestBusyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="다른 적재/삭제 작업이 진행 중이다. 잠시 후 다시 시도할 것",
+        ) from exc
+    if not result["documents"]:
+        raise HTTPException(status_code=404, detail=f"적재된 문서가 없는 프로젝트다: {scope}")
+    return ProjectDeleteOutput(
+        project_id=scope,
+        documents=result["documents"],
         deleted_chunks=result["deleted_children"],
         deleted_parents=result["deleted_parents"],
     )

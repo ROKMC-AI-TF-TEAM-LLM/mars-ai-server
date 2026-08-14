@@ -92,6 +92,14 @@ class DocumentItem(BaseModel):
         ),
         examples=["HR_TEAM"],
     )
+    project_id: str = Field(
+        default="",
+        description=(
+            '소속 프로젝트. ""=전사 공용(모든 채팅에서 검색), '
+            "값이 있으면 그 프로젝트 채팅에서만 검색된다"
+        ),
+        examples=[""],
+    )
     applied_at: datetime = Field(
         description="적재(갱신) 시각 — 청크 중 최신 created_at",
         examples=["2026-07-05T19:09:47"],
@@ -132,5 +140,14 @@ class DocumentDeleteOutput(BaseModel):
     """DELETE /documents/{name} 응답."""
 
     name: str = Field(description="삭제된 문서 파일명")
+    deleted_chunks: int = Field(description="삭제된 자식 청크 수")
+    deleted_parents: int = Field(description="삭제된 부모 청크 수")
+
+
+class ProjectDeleteOutput(BaseModel):
+    """DELETE /projects/{project_id} 응답."""
+
+    project_id: str = Field(description="삭제된 프로젝트 ID")
+    documents: list[str] = Field(description="삭제된 문서 파일명 목록")
     deleted_chunks: int = Field(description="삭제된 자식 청크 수")
     deleted_parents: int = Field(description="삭제된 부모 청크 수")

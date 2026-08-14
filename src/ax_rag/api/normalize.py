@@ -48,6 +48,23 @@ def normalize_project_id(value: str) -> str:
     return normalized
 
 
+def validate_project_id_strict(value: str) -> str:
+    """project_id 엄격 검증. 비었거나 형식 위반이면 ValueError(한국어 사유).
+
+    적재·삭제처럼 **틀리면 되돌릴 수 없는** 경로에서 쓴다. 질의(normalize_project_id)와
+    달리 조용히 ""로 떨어뜨리지 않는다 — 적재에서는 프로젝트 문서가 전사 공용이 되고,
+    삭제에서는 전사 문서 전체가 대상이 된다.
+    """
+    normalized = (value or "").strip()
+    if not normalized:
+        raise ValueError("project_id가 비어 있다")
+    if len(normalized) > _PROJECT_ID_MAX_CHARS:
+        raise ValueError(f"project_id가 너무 길다 (최대 {_PROJECT_ID_MAX_CHARS}자)")
+    if not _PROJECT_ID_ALLOWED.match(normalized):
+        raise ValueError(f"허용되지 않는 project_id: {value!r} (영숫자·밑줄·하이픈만)")
+    return normalized
+
+
 def normalize_tool(value: str) -> str:
     """요청 tool 정규화: DOC_SEARCH 또는 강제 허용(FORCIBLE) 도구만 인정한다.
 
@@ -134,12 +151,10 @@ def validate_upload(
     if visibility_normalized == "DEPT_ONLY" and not department_normalized:
         raise ValueError("visibility=DEPT_ONLY에는 department(소유 부서)가 필요하다")
 
-    project_normalized = (project_id or "").strip()
-    if project_normalized:
-        if len(project_normalized) > _PROJECT_ID_MAX_CHARS:
-            raise ValueError(f"project_id가 너무 길다 (최대 {_PROJECT_ID_MAX_CHARS}자)")
-        if not _PROJECT_ID_ALLOWED.match(project_normalized):
-            raise ValueError(f"허용되지 않는 project_id: {project_id!r} (영숫자·밑줄·하이픈만)")
+    # 빈 값(전사 공용)은 허용하고, 값이 있으면 엄격 검증
+    project_normalized = (
+        validate_project_id_strict(project_id) if (project_id or "").strip() else ""
+    )
     return (
         safe_name,
         domain_normalized,
