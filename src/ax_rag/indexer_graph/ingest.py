@@ -25,12 +25,21 @@ class IngestBusyError(RuntimeError):
     """다른 적재/삭제 작업이 진행 중이라 잠금을 얻지 못했다."""
 
 
-def ingest_file(path: Path, domain: str, owning_department: str, visibility: str) -> dict:
+def ingest_file(
+    path: Path,
+    domain: str,
+    owning_department: str,
+    visibility: str,
+    project_id: str = "",
+) -> dict:
     """문서 1건 적재(갱신): 텍스트 추출 검증 → 기존 청크 삭제 → 재적재.
 
     같은 파일명이 이미 적재돼 있으면 갱신(삭제 후 재적재)이다.
     텍스트 추출을 삭제보다 먼저 수행한다 — 추출 실패(스캔본 PDF 등) 시
     기존 데이터를 지우지 않기 위해서다.
+
+    project_id는 ""(전사 공용)가 기본이다. 값을 주면 그 프로젝트 채팅에서만
+    검색된다.
 
     반환: {"source_doc", "deleted_children", "deleted_parents", "chunks_indexed"}
     추출 실패 시 ValueError.
@@ -57,6 +66,7 @@ def ingest_file(path: Path, domain: str, owning_department: str, visibility: str
                 "domain": domain,
                 "owning_department": owning_department,
                 "visibility": visibility,
+                "project_id": project_id,
                 "sections": sections,
             }
         )

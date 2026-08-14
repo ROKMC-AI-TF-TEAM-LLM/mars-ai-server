@@ -108,6 +108,7 @@ def embed_and_upsert(state: IndexState) -> dict:
             "domain": state["domain"],
             "owning_department": state["owning_department"],
             "visibility": state["visibility"],
+            "project_id": state.get("project_id") or "",  # ""=전사 공용
             "doc_classification": "NORMAL",  # 예약 필드: 현재 항상 NORMAL (interfaces.md §2)
             "created_at": now,
         }

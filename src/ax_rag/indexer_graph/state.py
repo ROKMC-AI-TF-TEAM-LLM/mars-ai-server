@@ -14,6 +14,7 @@ class IndexState(TypedDict):
     domain: str
     owning_department: str
     visibility: str
+    project_id: str | None  # ""=전사 공용, 그 외=해당 프로젝트 전용
     sections: list[dict] | None  # [{"title": str|None, "text": str}, ...]
     chunks: list[dict] | None  # 자식 청크 [{"text", "chunk_index", "parent_id", "section_title"}]
     # 스펙 보충 필드: chunk 노드가 만든 부모 청크를 embed_and_upsert로 전달한다

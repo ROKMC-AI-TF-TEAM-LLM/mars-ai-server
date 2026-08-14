@@ -70,6 +70,10 @@ def create_collection(drop_existing: bool = False) -> str:
     schema.add_field("domain", DataType.VARCHAR, max_length=32)
     schema.add_field("owning_department", DataType.VARCHAR, max_length=32)
     schema.add_field("visibility", DataType.VARCHAR, max_length=16)
+    # 프로젝트 격리: ""=전사 공용, 그 외=해당 프로젝트 전용.
+    # 일반 채팅은 ""만 검색하고, 프로젝트 채팅은 "" + 자기 프로젝트를 검색한다.
+    # 프로젝트 문서의 접근 통제는 이 필드가 담당하므로 visibility는 ALL로 둔다
+    schema.add_field("project_id", DataType.VARCHAR, max_length=64)
     # 예약 필드: 현재는 항상 "NORMAL". 향후 문서 등급-사용자 신원등급 매칭용. 삭제 금지
     schema.add_field("doc_classification", DataType.VARCHAR, max_length=16)
     schema.add_field("created_at", DataType.INT64)
