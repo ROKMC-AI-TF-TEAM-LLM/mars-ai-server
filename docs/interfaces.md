@@ -390,7 +390,7 @@ data: {"type":"done"}
 
 ### 우리 서버 문서 관리 API (9000)
 
-이 API 4종(POST/GET/DELETE /documents, GET /documents/jobs)은 **관리자 페이지**의
+이 API 5종(POST/GET/DELETE /documents, GET /documents/jobs, DELETE /projects/{project_id})은 **관리자 페이지**의
 데이터 소스다. 미들웨어가 관리자 권한을 확인한 뒤 프록시한다 (MARS는 자체
 인증·권한이 없다 — 내부망 신뢰).
 
@@ -461,6 +461,22 @@ data: {"type":"done"}
 - 자식·부모 청크 삭제 후 BM25 전체 재빌드. **동기 처리** — 수 초~수십 초
 - 응답: `{"name": str, "deleted_chunks": int, "deleted_parents": int}`
 - 404: 미적재 문서, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
+
+**`DELETE /projects/{project_id}`** — 프로젝트 문서 일괄 삭제
+
+- 그 프로젝트에 속한 문서를 전부 삭제하고 BM25를 **한 번만** 재빌드한다
+  (문서마다 재빌드하지 않는다). **동기 처리**
+- **전사 공용 문서는 지우지 않는다.** `project_id`가 빈 문서는 대상이 아니며,
+  빈 값·형식 위반은 **400**으로 거부한다 — 허용하면 전사 문서 전체가 삭제 대상이 된다
+- 응답: `{"project_id": str, "documents": [str], "deleted_chunks": int, "deleted_parents": int}`
+- 404: 그 프로젝트에 적재된 문서 없음, 409: 다른 적재/삭제 진행 중
+
+> 부모 청크에는 `project_id`가 없으므로(§2 참조) 자식에서 문서명을 먼저 모아 지운다.
+
+**`GET /documents?project_id=...`** — 프로젝트 필터
+
+- 값을 주면 그 프로젝트 문서만, `""`를 주면 전사 공용 문서만, 생략하면 전부
+- 응답 `DocumentItem`에 `project_id` 필드가 포함된다
 
 ### 우리 서버 `GET /files/{name}` (9000) — 생성 문서 다운로드
 
