@@ -36,6 +36,17 @@ class QueryRequest(BaseModel):
         ),
         examples=["DIRECTIVE"],
     )
+    project_id: str = Field(
+        default="",
+        description=(
+            "프로젝트 채팅 범위 (선택). 지정하면 **전사 문서 + 그 프로젝트 문서**를 "
+            "검색한다. 빈 값이면 전사 문서만 검색하며 프로젝트 문서는 노출되지 않는다. "
+            "영숫자·밑줄·하이픈만 허용(최대 64자)하고, 형식 위반은 전사 검색으로 처리한다. "
+            "⚠️ **이 값의 멤버십 검증은 미들웨어 책임이다** — MARS는 받은 값을 신뢰한다 "
+            "(user_department와 동일 신뢰 모델)"
+        ),
+        examples=["proj-7f3a"],
+    )
     tool: str = Field(
         default="",
         description=(

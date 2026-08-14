@@ -23,6 +23,7 @@ def log_query(
     sources: list[str],
     grounded: bool,
     answer_mode: str | None = None,
+    project_id: str = "",
     tool_calls: list[dict] | None = None,
     agent_steps: int = 0,
 ) -> None:
@@ -38,12 +39,16 @@ def log_query(
     (2회 검색 후 grounded=True)를 사후에 확인할 수 있는 유일한 자료이며,
     사용자에게 표시된 thought도 여기 남는다. plan-then-execute 경로에서는
     비어 있다 (키는 항상 존재 — 추가 전용 변경).
+
+    project_id는 실제 적용된 프로젝트 범위다 (""=전사). 정규화 후 값이므로
+    형식 위반으로 전사로 떨어진 요청도 ""로 기록된다.
     """
     record = {
         "timestamp": datetime.now(UTC).isoformat(),
         "user_department": user_department,
         "question": question,
         "domain": domain,
+        "project_id": project_id,
         "sources": sources,
         "grounded": grounded,
         "answer_mode": answer_mode,

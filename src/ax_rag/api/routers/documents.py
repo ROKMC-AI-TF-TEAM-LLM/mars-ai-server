@@ -96,7 +96,14 @@ def list_documents(
     )
 
 
-def _run_ingest_job(job_id: str, path: Path, domain: str, department: str, visibility: str) -> None:
+def _run_ingest_job(
+    job_id: str,
+    path: Path,
+    domain: str,
+    department: str,
+    visibility: str,
+    project_id: str = "",
+) -> None:
     """백그라운드 적재 실행 (BackgroundTasks가 스레드풀에서 호출).
 
     적재/삭제는 ingest 모듈 잠금으로 직렬화되므로, 동시에 여러 건이
@@ -105,7 +112,11 @@ def _run_ingest_job(job_id: str, path: Path, domain: str, department: str, visib
     _ingest_jobs.mark_running(job_id)
     try:
         result = ingest.ingest_file(
-            path, domain=domain, owning_department=department, visibility=visibility
+            path,
+            domain=domain,
+            owning_department=department,
+            visibility=visibility,
+            project_id=project_id,
         )
         _ingest_jobs.mark_done(
             job_id,
@@ -172,11 +183,25 @@ async def upload_document(
         str,
         Query(description='공개 범위: "ALL"(전사, 기본) | "DEPT_ONLY"(소유 부서만)'),
     ] = "ALL",
+    project_id: Annotated[
+        str,
+        Query(
+            description=(
+                "프로젝트 전용 적재 (선택). 지정하면 그 프로젝트 채팅에서만 검색된다. "
+                "빈 값이면 전사 공용. 영숫자·밑줄·하이픈만 허용(최대 64자)하며 "
+                "형식 위반은 400 — 조용히 전사 공용이 되면 안 되기 때문이다"
+            )
+        ),
+    ] = "",
 ) -> IngestJobStatus:
     try:
-        safe_name, domain_normalized, visibility_normalized, department_normalized = (
-            validate_upload(name, domain, visibility, department)
-        )
+        (
+            safe_name,
+            domain_normalized,
+            visibility_normalized,
+            department_normalized,
+            project_normalized,
+        ) = validate_upload(name, domain, visibility, department, project_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -207,14 +232,16 @@ async def upload_document(
         domain_normalized,
         department_normalized,
         visibility_normalized,
+        project_normalized,
     )
     logger.info(
-        "적재 작업 접수: job=%s, 문서=%s (%d바이트, domain=%s, visibility=%s)",
+        "적재 작업 접수: job=%s, 문서=%s (%d바이트, domain=%s, visibility=%s, project=%s)",
         job.job_id,
         safe_name,
         len(content),
         domain_normalized,
         visibility_normalized,
+        project_normalized or "(전사)",
     )
     return IngestJobStatus(**job.to_dict())
 

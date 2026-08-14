@@ -12,7 +12,12 @@ from collections.abc import AsyncIterator
 
 from fastapi import Request
 
-from ax_rag.api.normalize import normalize_requested_domain, normalize_tool, to_internal_history
+from ax_rag.api.normalize import (
+    normalize_project_id,
+    normalize_requested_domain,
+    normalize_tool,
+    to_internal_history,
+)
 from ax_rag.api.schemas import QueryRequest
 from ax_rag.api.sse import sse_event, stream_answer
 from ax_rag.query_graph.graph import graph
@@ -62,11 +67,13 @@ async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIte
     """
     user_department = request.user_department or ""
     requested_domain = normalize_requested_domain(request.domain)
+    project_id = normalize_project_id(request.project_id)
     try:
         state = {
             "question": request.question,
             "user_department": user_department,
             "requested_domain": requested_domain,
+            "project_id": project_id,
             "conversation_history": to_internal_history(request.messages),
         }
         forced_intent = normalize_tool(request.tool)
@@ -120,6 +127,7 @@ async def run_pipeline(request: QueryRequest, http_request: Request) -> AsyncIte
             sources=[s["name"] for s in sources],
             grounded=grounded,
             answer_mode=answer_mode,
+            project_id=project_id,
             # ReAct: 어떤 도구를 어떤 인자로 몇 번 불렀는지 (code_guide §12 패턴 C 요건)
             tool_calls=result.get("tool_calls_log") or None,
             agent_steps=int(result.get("agent_steps") or 0),

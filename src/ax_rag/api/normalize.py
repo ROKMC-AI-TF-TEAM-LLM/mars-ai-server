@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ax_rag.indexer_graph.loaders import SUPPORTED_SUFFIXES
 from ax_rag.query_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_NODES
 from ax_rag.shared.config import DOMAINS
@@ -18,6 +20,32 @@ logger = get_logger(__name__)
 
 # Milvus source_doc 필드 길이 제한 (interfaces.md §2: VARCHAR(512))
 _SOURCE_DOC_MAX_CHARS = 512
+
+# Milvus project_id 필드 길이 제한 (interfaces.md §2: VARCHAR(64))
+_PROJECT_ID_MAX_CHARS = 64
+
+# project_id 허용 문자 — acl._sanitize와 같은 집합.
+# 여기서 미리 거르면 "정제되어 조용히 다른 프로젝트가 되는" 상황을 없앤다
+_PROJECT_ID_ALLOWED = re.compile(r"^[0-9A-Za-z_\-]+$")
+
+
+def normalize_project_id(value: str) -> str:
+    """요청 project_id 정규화. 빈 값 또는 형식 위반이면 ""(전사 검색).
+
+    ⚠️ 이 값의 **멤버십 검증은 미들웨어 책임**이다 (user_department와 동일
+    신뢰 모델). 여기서는 형식만 본다 — 형식이 어긋나면 프로젝트 문서를
+    보여주지 않는 쪽(전사만)으로 떨어뜨린다 (fail-closed).
+    """
+    normalized = (value or "").strip()
+    if not normalized:
+        return ""
+    if len(normalized) > _PROJECT_ID_MAX_CHARS:
+        logger.warning("project_id가 너무 길다 (%d자) → 전사 검색", len(normalized))
+        return ""
+    if not _PROJECT_ID_ALLOWED.match(normalized):
+        logger.warning("project_id 형식 위반: %r → 전사 검색", value)
+        return ""
+    return normalized
 
 
 def normalize_tool(value: str) -> str:
@@ -69,13 +97,18 @@ def to_internal_history(messages: list[dict]) -> list[dict]:
 
 
 def validate_upload(
-    name: str, domain: str, visibility: str, department: str
-) -> tuple[str, str, str, str]:
+    name: str, domain: str, visibility: str, department: str, project_id: str = ""
+) -> tuple[str, str, str, str, str]:
     """업로드 파라미터 검증·정규화. 문제가 있으면 ValueError(한국어 사유).
 
     파일명은 경로 성분을 제거해 basename만 취한다 (경로 탈출 방지).
     큰따옴표는 Milvus filter 식을 깨뜨리므로 금지한다.
-    반환: (safe_name, domain, visibility, department)
+
+    ⚠️ project_id는 질의와 달리 **엄격하게** 본다. 질의에서 형식 위반은 전사
+    검색으로 떨어져 범위가 좁아지지만, 적재에서 ""로 떨어지면 프로젝트 전용
+    문서가 **전사 공용으로 영구히 남는다** — 조용히 넘기면 안 된다.
+
+    반환: (safe_name, domain, visibility, department, project_id)
     """
     safe_name = (name or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     if not safe_name:
@@ -100,4 +133,17 @@ def validate_upload(
     department_normalized = (department or "").strip().upper()
     if visibility_normalized == "DEPT_ONLY" and not department_normalized:
         raise ValueError("visibility=DEPT_ONLY에는 department(소유 부서)가 필요하다")
-    return safe_name, domain_normalized, visibility_normalized, department_normalized
+
+    project_normalized = (project_id or "").strip()
+    if project_normalized:
+        if len(project_normalized) > _PROJECT_ID_MAX_CHARS:
+            raise ValueError(f"project_id가 너무 길다 (최대 {_PROJECT_ID_MAX_CHARS}자)")
+        if not _PROJECT_ID_ALLOWED.match(project_normalized):
+            raise ValueError(f"허용되지 않는 project_id: {project_id!r} (영숫자·밑줄·하이픈만)")
+    return (
+        safe_name,
+        domain_normalized,
+        visibility_normalized,
+        department_normalized,
+        project_normalized,
+    )
