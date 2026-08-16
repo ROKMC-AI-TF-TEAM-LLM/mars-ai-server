@@ -135,6 +135,16 @@ def _load_cached() -> tuple[bm25s.BM25, list[dict]] | None:
     return retriever, corpus
 
 
+def corpus_size() -> int:
+    """인덱스에 담긴 문서(청크) 수. 인덱스가 없으면 0.
+
+    후처리 필터가 걸러낼 분량을 감안해 검색 깊이를 정할 때 쓴다 —
+    코퍼스 크기를 고정 상수로 박으면 코퍼스가 커질 때 조용히 부족해진다.
+    """
+    loaded = _load_cached()
+    return len(loaded[1]) if loaded else 0
+
+
 def bm25_search(query: str, top_k: int = 20) -> list[dict]:
     """Kiwi 토큰화 → bm25s 검색 → 메타데이터 포함 결과 반환.
 

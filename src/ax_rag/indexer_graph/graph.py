@@ -24,7 +24,9 @@ logger = get_logger(__name__)
 # 처리 시간이 timeout 안에 들도록 16으로 유지한다
 _EMBED_REQUEST_BATCH = 16
 
-# BM25 재빌드 시 corpus 메타데이터로 보존할 필드 (ACL 후처리 필터에 필요한 필드 포함)
+# BM25 재빌드 시 corpus 메타데이터로 보존할 필드 (ACL 후처리 필터에 필요한 필드 포함).
+# ⚠️ 필터가 보는 필드를 여기서 빠뜨리면 후처리가 그 조건을 검사하지 못한다 —
+# project_id가 없으면 프로젝트 문서가 전사 공용으로 취급돼 일반 채팅에 샌다
 _BM25_META_FIELDS = [
     "chunk_id",
     "parent_id",
@@ -32,6 +34,7 @@ _BM25_META_FIELDS = [
     "domain",
     "owning_department",
     "visibility",
+    "project_id",
 ]
 
 
@@ -108,6 +111,7 @@ def embed_and_upsert(state: IndexState) -> dict:
             "domain": state["domain"],
             "owning_department": state["owning_department"],
             "visibility": state["visibility"],
+            "project_id": state.get("project_id") or "",  # ""=전사 공용
             "doc_classification": "NORMAL",  # 예약 필드: 현재 항상 NORMAL (interfaces.md §2)
             "created_at": now,
         }

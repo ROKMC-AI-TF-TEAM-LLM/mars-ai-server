@@ -16,6 +16,13 @@ class QueryState(TypedDict):
     search_queries: list[str] | None  # 검색에 쓸 쿼리 목록. 첫 항목이 rewritten_query
     user_department: str
     requested_domain: str | None  # 요청이 한정한 도메인. 빈 값이면 전 도메인 검색
+    # 요청이 지정한 프로젝트. 빈 값이면 전사 문서만, 값이 있으면 전사 + 그 프로젝트.
+    # ⚠️ 멤버십 검증은 미들웨어 책임이다 (user_department와 동일 신뢰 모델)
+    project_id: str | None
+    # 프로젝트 지침 (사용자 작성). <instructions> delimiter로 감싸 데이터로 전달한다.
+    # 답변 생성·잡담·지식 답변에 적용되고, verify에는 절대 넣지 않는다 —
+    # 사용자가 검증 기준을 바꾸면 안전장치가 무력화된다
+    project_instructions: str | None
     intent: str | None  # 처리 경로 대표값. 요청의 tool 필드가 선설정하면 강제
     intents: list[str] | None  # 실행된 경로 기록 = 최종 답변 합성 순서
     tool_answers: list[dict] | None  # [{"intent": str, "answer": str}]

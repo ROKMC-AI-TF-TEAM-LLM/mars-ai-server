@@ -65,7 +65,6 @@ def merge_query_results(per_query: list[list[dict]], top_n: int) -> list[dict]:
     take(per_query[0], primary_quota)
     for sub in per_query[1:]:
         take(sub, sub_quota)
-    # 쿼터를 다 못 채웠으면(중복·부족) 순위대로 남은 자리를 메운다
     for items in per_query:
         take(items, top_n)
     return merged[:top_n]

@@ -70,6 +70,10 @@ def create_collection(drop_existing: bool = False) -> str:
     schema.add_field("domain", DataType.VARCHAR, max_length=32)
     schema.add_field("owning_department", DataType.VARCHAR, max_length=32)
     schema.add_field("visibility", DataType.VARCHAR, max_length=16)
+    # 프로젝트 격리: ""=전사 공용, 그 외=해당 프로젝트 전용.
+    # 일반 채팅은 ""만 검색하고, 프로젝트 채팅은 "" + 자기 프로젝트를 검색한다.
+    # 프로젝트 문서의 접근 통제는 이 필드가 담당하므로 visibility는 ALL로 둔다
+    schema.add_field("project_id", DataType.VARCHAR, max_length=64)
     # 예약 필드: 현재는 항상 "NORMAL". 향후 문서 등급-사용자 신원등급 매칭용. 삭제 금지
     schema.add_field("doc_classification", DataType.VARCHAR, max_length=16)
     schema.add_field("created_at", DataType.INT64)
@@ -147,7 +151,7 @@ def list_documents() -> list[dict]:
     문서명 오름차순 정렬로 반환한다.
     """
     rows = fetch_all_children(
-        ["source_doc", "domain", "visibility", "owning_department", "created_at"]
+        ["source_doc", "domain", "visibility", "owning_department", "project_id", "created_at"]
     )
     documents: dict[str, dict] = {}
     for row in rows:
@@ -158,6 +162,7 @@ def list_documents() -> list[dict]:
                 "domain": row["domain"],
                 "visibility": row["visibility"],
                 "owning_department": row["owning_department"],
+                "project_id": row.get("project_id") or "",
                 "chunk_count": 0,
                 "applied_at": 0,  # unix timestamp, 청크 중 최신 적재 시각
             },
@@ -180,3 +185,13 @@ def delete_by_filter(collection_name: str, expr: str) -> int:
 def delete_by_source_doc(source_doc: str) -> int:
     """특정 문서의 자식 청크를 전부 삭제한다 (문서 갱신용). 삭제 건수 반환."""
     return delete_by_filter(get_collection(), f'source_doc == "{source_doc}"')
+
+
+def delete_by_project(project_id: str) -> int:
+    """프로젝트에 속한 자식 청크를 전부 삭제한다. 삭제 건수 반환.
+
+    ⚠️ 빈 project_id는 **전사 공용 문서 전체**를 지우게 되므로 거부한다.
+    """
+    if not project_id:
+        raise ValueError("project_id가 비어 있다 (전사 문서 전체 삭제 방지)")
+    return delete_by_filter(get_collection(), f'project_id == "{project_id}"')

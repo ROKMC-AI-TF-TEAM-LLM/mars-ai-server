@@ -36,6 +36,28 @@ class QueryRequest(BaseModel):
         ),
         examples=["DIRECTIVE"],
     )
+    project_id: str = Field(
+        default="",
+        description=(
+            "프로젝트 채팅 범위 (선택). 지정하면 **전사 문서 + 그 프로젝트 문서**를 "
+            "검색한다. 빈 값이면 전사 문서만 검색하며 프로젝트 문서는 노출되지 않는다. "
+            "영숫자·밑줄·하이픈만 허용(최대 64자)하고, 형식 위반은 전사 검색으로 처리한다. "
+            "⚠️ **이 값의 멤버십 검증은 미들웨어 책임이다** — MARS는 받은 값을 신뢰한다 "
+            "(user_department와 동일 신뢰 모델)"
+        ),
+        examples=["proj-7f3a"],
+    )
+    project_instructions: str = Field(
+        default="",
+        description=(
+            "프로젝트 지침 (선택, 최대 1000자 — 초과분은 잘린다). 사용자가 프로젝트에 "
+            "설정한 답변 방식 요청을 그대로 넣는다 (예: '표로 정리해줘', '용어를 풀어서 설명'). "
+            "**표현 방식에만 적용되며 근거 규칙을 이기지 못한다** — 문서에 없는 내용을 "
+            "답하라는 지시는 무시되고, 답변은 여전히 근거 검증을 거친다. "
+            "미들웨어가 프로젝트 설정에서 읽어 매 요청에 실어 보낸다 (MARS는 저장하지 않는다)"
+        ),
+        examples=["답변은 항목별로 나눠서 정리하고, 전문 용어는 괄호에 풀어서 써 주세요."],
+    )
     tool: str = Field(
         default="",
         description=(
@@ -81,6 +103,14 @@ class DocumentItem(BaseModel):
         ),
         examples=["HR_TEAM"],
     )
+    project_id: str = Field(
+        default="",
+        description=(
+            '소속 프로젝트. ""=전사 공용(모든 채팅에서 검색), '
+            "값이 있으면 그 프로젝트 채팅에서만 검색된다"
+        ),
+        examples=[""],
+    )
     applied_at: datetime = Field(
         description="적재(갱신) 시각 — 청크 중 최신 created_at",
         examples=["2026-07-05T19:09:47"],
@@ -121,5 +151,14 @@ class DocumentDeleteOutput(BaseModel):
     """DELETE /documents/{name} 응답."""
 
     name: str = Field(description="삭제된 문서 파일명")
+    deleted_chunks: int = Field(description="삭제된 자식 청크 수")
+    deleted_parents: int = Field(description="삭제된 부모 청크 수")
+
+
+class ProjectDeleteOutput(BaseModel):
+    """DELETE /projects/{project_id} 응답."""
+
+    project_id: str = Field(description="삭제된 프로젝트 ID")
+    documents: list[str] = Field(description="삭제된 문서 파일명 목록")
     deleted_chunks: int = Field(description="삭제된 자식 청크 수")
     deleted_parents: int = Field(description="삭제된 부모 청크 수")

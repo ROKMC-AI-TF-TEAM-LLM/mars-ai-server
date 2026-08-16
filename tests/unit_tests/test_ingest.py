@@ -76,6 +76,17 @@ def test_적재_상태에_메타데이터가_그대로_전달된다(recorder: _C
     assert "휴가는 연 21일" in state["text"]
 
 
+def test_project_id를_안_주면_전사_공용으로_적재된다(recorder: _CallRecorder) -> None:
+    """기존 호출부(bulk_ingest, API)가 그대로 동작해야 한다 — 빈 값 = 전사 공용."""
+    ingest_file(Path("휴가규정.md"), "HR", "HR_TEAM", "ALL")
+    assert (recorder.invoked_state or {})["project_id"] == ""
+
+
+def test_project_id를_주면_그대로_전달된다(recorder: _CallRecorder) -> None:
+    ingest_file(Path("부대지침.md"), "HR", "HR_TEAM", "ALL", project_id="proj-1")
+    assert (recorder.invoked_state or {})["project_id"] == "proj-1"
+
+
 def test_텍스트_추출_실패면_삭제_없이_ValueError(
     recorder: _CallRecorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:

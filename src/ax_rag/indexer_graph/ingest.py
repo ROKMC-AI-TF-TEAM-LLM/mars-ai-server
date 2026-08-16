@@ -25,12 +25,21 @@ class IngestBusyError(RuntimeError):
     """다른 적재/삭제 작업이 진행 중이라 잠금을 얻지 못했다."""
 
 
-def ingest_file(path: Path, domain: str, owning_department: str, visibility: str) -> dict:
+def ingest_file(
+    path: Path,
+    domain: str,
+    owning_department: str,
+    visibility: str,
+    project_id: str = "",
+) -> dict:
     """문서 1건 적재(갱신): 텍스트 추출 검증 → 기존 청크 삭제 → 재적재.
 
     같은 파일명이 이미 적재돼 있으면 갱신(삭제 후 재적재)이다.
     텍스트 추출을 삭제보다 먼저 수행한다 — 추출 실패(스캔본 PDF 등) 시
     기존 데이터를 지우지 않기 위해서다.
+
+    project_id는 ""(전사 공용)가 기본이다. 값을 주면 그 프로젝트 채팅에서만
+    검색된다.
 
     반환: {"source_doc", "deleted_children", "deleted_parents", "chunks_indexed"}
     추출 실패 시 ValueError.
@@ -57,6 +66,7 @@ def ingest_file(path: Path, domain: str, owning_department: str, visibility: str
                 "domain": domain,
                 "owning_department": owning_department,
                 "visibility": visibility,
+                "project_id": project_id,
                 "sections": sections,
             }
         )
@@ -66,6 +76,53 @@ def ingest_file(path: Path, domain: str, owning_department: str, visibility: str
         "deleted_parents": deleted_parents,
         "chunks_indexed": int(result.get("chunks_indexed") or 0),
     }
+
+
+def delete_project(project_id: str, wait_seconds: float = 10.0) -> dict:
+    """프로젝트에 속한 문서를 전부 삭제한다 (자식·부모 + BM25 1회 재빌드).
+
+    부모 청크에는 project_id가 없으므로(parent_id로만 조회된다) 자식에서
+    문서명을 먼저 모아 부모를 지운다. BM25는 문서마다 재빌드하지 않고
+    전부 지운 뒤 한 번만 돌린다.
+
+    반환: {"project_id", "documents", "deleted_children", "deleted_parents"}
+    """
+    if not project_id:
+        raise ValueError("project_id가 비어 있다 (전사 문서 전체 삭제 방지)")
+    if not _LOCK.acquire(timeout=wait_seconds):
+        raise IngestBusyError("다른 적재/삭제 작업이 진행 중이다")
+    try:
+        documents = [
+            doc["source_doc"]
+            for doc in vectorstore.list_documents()
+            if doc.get("project_id") == project_id
+        ]
+        if not documents:
+            return {
+                "project_id": project_id,
+                "documents": [],
+                "deleted_children": 0,
+                "deleted_parents": 0,
+            }
+
+        deleted_children = vectorstore.delete_by_project(project_id)
+        deleted_parents = sum(parent_store.delete_by_source_doc(name) for name in documents)
+        rebuild_bm25()
+        logger.info(
+            "프로젝트 삭제: %s → 문서 %d건, 자식 %d건·부모 %d건",
+            project_id,
+            len(documents),
+            deleted_children,
+            deleted_parents,
+        )
+        return {
+            "project_id": project_id,
+            "documents": documents,
+            "deleted_children": deleted_children,
+            "deleted_parents": deleted_parents,
+        }
+    finally:
+        _LOCK.release()
 
 
 def delete_document(source_doc: str, wait_seconds: float = 10.0) -> dict:

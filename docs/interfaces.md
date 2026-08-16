@@ -23,17 +23,29 @@
 - `domain`: VARCHAR(32) — config.DOMAINS 중 하나
 - `owning_department`: VARCHAR(32) — ACL 소유 부서
 - `visibility`: VARCHAR(16) — `"ALL"` | `"DEPT_ONLY"`
+- `project_id`: VARCHAR(64) — **프로젝트 격리**. `""`=전사 공용, 그 외=해당 프로젝트 전용.
+  일반 채팅은 `""`만 검색하고, 프로젝트 채팅은 `""` + 자기 프로젝트를 검색한다.
+  프로젝트 문서의 접근 통제는 이 필드가 담당하므로 `visibility`는 `"ALL"`로 둔다
 - `doc_classification`: VARCHAR(16) — **예약 필드**. 현재는 항상 `"NORMAL"` 기록.
   향후 문서 등급(대외비 등) 및 사용자 신원등급 매칭용. 삭제 금지
 - `created_at`: INT64 — unix timestamp
 
 인덱스: HNSW, `metric_type=COSINE`, `params={"M": 16, "efConstruction": 200}`
 
+> **스키마 변경 시 마이그레이션**: `milvus-lite`는 기존 컬렉션에 필드를 추가할 수
+> 없다 (Milvus 2.5+ 기능). `scripts/migrate_project_id.py`가 기존 청크를 **임베딩까지
+> 읽어와 새 스키마로 다시 넣는** 방식을 쓴다 — 재임베딩·PDF 재파싱이 없어
+> 청킹 결과가 달라질 위험이 없고, `chunk_id`·`parent_id`가 보존되므로
+> `document_parents`와 BM25 인덱스를 손대지 않아도 된다.
+
 ### 부모 청크 컬렉션 `document_parents` (벡터 인덱스 없음)
 
 - `parent_id`: VARCHAR(64), PK, uuid4 hex
 - `parent_text`: VARCHAR(8000) — 800~1,200토큰 분량 (한국어 여유 8000자)
 - `source_doc`: VARCHAR(512)
+
+부모 청크에는 ACL·`project_id`가 없다. `parent_id`로만 조회되고, 그 `parent_id`는
+이미 ACL·프로젝트 필터를 통과한 자식 청크에서만 나오기 때문이다.
 
 ## 3. TypedDict 스키마
 
@@ -57,6 +69,8 @@ class QueryState(TypedDict):
     rewritten_query: Optional[str]               # 첫 검색어 (리랭크 기준·로그·평가가 참조)
     user_department: str
     requested_domain: Optional[str]              # 요청이 명시한 검색 도메인 한정 (빈 값=전체)
+    project_id: Optional[str]                    # 빈 값=전사만, 값=전사+그 프로젝트 (검증은 미들웨어)
+    project_instructions: Optional[str]          # 프로젝트 지침 (generate·잡담·지식답변에만, verify 제외)
     intent: Optional[str]                        # 요청 tool 필드의 강제 경로 (없으면 에이전트가 판단)
     intents: Optional[list[str]]                 # 실행된 경로 기록. 순서 = 최종 답변 합성 순서
     tool_answers: Optional[list[dict]]           # 도구 실행 결과 누적 [{"intent": str, "answer": str}]
@@ -125,8 +139,9 @@ def get_parent(parent_id: str) -> str:
     """parent_text 반환. 없으면 빈 문자열."""
 
 # query_graph/acl.py
-def build_acl_filter_expr(domain: str, user_department: str) -> str: ...
-def filter_by_acl(candidates: list[dict], domain: str, user_department: str) -> list[dict]:
+def build_acl_filter_expr(domain: str, user_department: str, project_id: str = "") -> str: ...
+def filter_by_acl(candidates: list[dict], domain: str, user_department: str,
+                  project_id: str = "") -> list[dict]:
     """BM25 결과에 ACL 후처리 필터 적용. dense는 Milvus 필터로
     처리되지만 bm25는 별도 인덱스라 코드에서 걸러야 함. 우회 금지."""
 
@@ -162,11 +177,16 @@ def get_llm() -> "ChatOpenAI": ...   # @lru_cache(maxsize=1)
 def log_query(user_department: str, question: str, domain: str,
               sources: list[str], grounded: bool,
               answer_mode: str | None = None,
+              project_id: str = "",
+              has_instructions: bool = False,
               tool_calls: list[dict] | None = None,
               agent_steps: int = 0) -> None:
     """JSONL append. 경로는 config.AUDIT_LOG_PATH.
     answer_mode는 답변 경로 — grounded만으로는 "검증 실패"와
     "근거 없이 LLM 지식으로 답함"이 구분되지 않는다.
+    project_id는 실제 적용된 프로젝트 범위 (""=전사).
+    has_instructions는 프로젝트 지침이 프롬프트에 실렸는지 (본문은 미기록) —
+    지침이 답변 품질에 미치는 영향을 사후 관찰하는 유일한 재료다.
     tool_calls/agent_steps는 ReAct 루프의 행동 기록
     ([{"step","action","thought","query"}]) — 재검색이 실제로 회복을
     만들어내는지 사후 확인하는 유일한 자료다."""
@@ -216,6 +236,8 @@ async def stream_answer(final_answer: str, sources: list[dict],
   "question": "그거 얼마나 쓸 수 있어?",
   "user_department": "TECH",
   "domain": "",
+  "project_id": "",
+  "project_instructions": "",
   "messages": [
     {"role": "human", "content": "육아휴직에 대해 알려줘"},
     {"role": "ai", "content": "육아휴직은 최대 1년까지..."}
@@ -223,6 +245,22 @@ async def stream_answer(final_answer: str, sources: list[dict],
 }
 ```
 
+- `project_id`(선택): 프로젝트 채팅 범위. 지정하면 **전사 문서 + 그 프로젝트 문서**를
+  검색하고, 빈 값이면 전사 문서만 검색한다 (프로젝트 문서는 노출되지 않는다).
+  영숫자·밑줄·하이픈만 허용(최대 64자)하며, **형식 위반은 전사 검색으로 처리**한다
+  (범위가 좁아지는 방향 — fail-closed).
+  프로젝트는 자기 문서에 한해서만 범위를 넓힌다. 전사 문서의 부서 ACL은 프로젝트
+  안에서도 그대로 걸린다.
+  > 🚨 **`project_id`의 멤버십 검증은 미들웨어 책임이다.** MARS는 요청에 실린 값을
+  > 신뢰한다 (`user_department`와 동일 신뢰 모델). 미들웨어가 검증하지 않으면
+  > 사용자가 임의의 `project_id`를 보내 **남의 프로젝트 문서를 읽을 수 있다.**
+- `project_instructions`(선택, 최대 1000자): 프로젝트 지침. 답변 생성·잡담·지식 답변에
+  `<instructions>` 태그로 감싸 전달되며, **검증(verify)에는 적용되지 않는다.**
+  태그 형태 문자열은 제거된다 (블록 탈출 방지). 서버 설정
+  `PROJECT_INSTRUCTIONS_ENABLED=false`면 전달돼도 무시된다.
+  > ⚠️ **지침은 근거 규칙을 이길 수 있다.** "지어내서라도 답하라"류 지침에서
+  > 절차 창작 4/4, 그중 3/4이 verify를 통과했다 (`experiments.md` 실험 14).
+  > 통제는 입력 단계 안내로 한다 — `middleware_migration.md`의 "운영 규칙" 참조.
 - `messages`의 role은 미들웨어 규약 `"human"` | `"ai"`.
   main.py 경계에서 내부 표현 `"user"` | `"assistant"`로 변환한다
   (QueryState.conversation_history는 내부 표현 유지)
@@ -364,7 +402,7 @@ data: {"type":"done"}
 
 ### 우리 서버 문서 관리 API (9000)
 
-이 API 4종(POST/GET/DELETE /documents, GET /documents/jobs)은 **관리자 페이지**의
+이 API 5종(POST/GET/DELETE /documents, GET /documents/jobs, DELETE /projects/{project_id})은 **관리자 페이지**의
 데이터 소스다. 미들웨어가 관리자 권한을 확인한 뒤 프록시한다 (MARS는 자체
 인증·권한이 없다 — 내부망 신뢰).
 
@@ -382,14 +420,19 @@ data: {"type":"done"}
 - 에어갭 정합: 전송 방향은 항상 미들웨어→MARS 인바운드다. MARS가 미들웨어로
   원본을 되돌려 push하지 않는다 (아웃바운드 금지, CLAUDE.md).
 
-**`POST /documents?name=...&domain=...&department=...&visibility=ALL`** — 적재/갱신
+**`POST /documents?name=...&domain=...&department=...&visibility=ALL&project_id=`** — 적재/갱신
 
 - 본문: **파일 바이트 그대로** (`Content-Type: application/octet-stream`).
   multipart가 아니다 — python-multipart 의존성을 늘리지 않기 위한 선택.
   미들웨어는 프론트에서 받은 파일의 바이트를 그대로 relay한다
 - 쿼리 파라미터: `name`(필수, 파일명 — 경로 성분은 제거됨),
   `domain`(필수, config.DOMAINS 중 하나 — 검색 필터와 달리 엄격 검증),
-  `department`(DEPT_ONLY면 필수), `visibility`(`ALL` 기본 | `DEPT_ONLY`)
+  `department`(DEPT_ONLY면 필수), `visibility`(`ALL` 기본 | `DEPT_ONLY`),
+  `project_id`(선택 — 지정하면 그 프로젝트 채팅에서만 검색된다)
+- ⚠️ `project_id`는 **질의와 달리 엄격 검증**이다: 형식 위반이면 **400**.
+  질의에서 형식 위반은 전사 검색으로 떨어져 범위가 좁아지지만, 적재에서 조용히
+  빈 값이 되면 **프로젝트 전용 문서가 전사 공용으로 영구히 남는다**.
+  프로젝트 문서는 `visibility="ALL"`로 두고 접근 통제를 `project_id`가 담당한다
 - 지원 형식 `.md`/`.txt`/`.pdf` (텍스트 인코딩은 UTF-8·UTF-8 BOM·CP949 자동
   인식 — Windows 메모장 저장 대응. 스캔본 PDF 실패), 최대 50MB
 - 같은 `name`이 이미 적재돼 있으면 **갱신**(기존 청크 삭제 후 재적재).
@@ -430,6 +473,22 @@ data: {"type":"done"}
 - 자식·부모 청크 삭제 후 BM25 전체 재빌드. **동기 처리** — 수 초~수십 초
 - 응답: `{"name": str, "deleted_chunks": int, "deleted_parents": int}`
 - 404: 미적재 문서, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
+
+**`DELETE /projects/{project_id}`** — 프로젝트 문서 일괄 삭제
+
+- 그 프로젝트에 속한 문서를 전부 삭제하고 BM25를 **한 번만** 재빌드한다
+  (문서마다 재빌드하지 않는다). **동기 처리**
+- **전사 공용 문서는 지우지 않는다.** `project_id`가 빈 문서는 대상이 아니며,
+  빈 값·형식 위반은 **400**으로 거부한다 — 허용하면 전사 문서 전체가 삭제 대상이 된다
+- 응답: `{"project_id": str, "documents": [str], "deleted_chunks": int, "deleted_parents": int}`
+- 404: 그 프로젝트에 적재된 문서 없음, 409: 다른 적재/삭제 진행 중
+
+> 부모 청크에는 `project_id`가 없으므로(§2 참조) 자식에서 문서명을 먼저 모아 지운다.
+
+**`GET /documents?project_id=...`** — 프로젝트 필터
+
+- 값을 주면 그 프로젝트 문서만, `""`를 주면 전사 공용 문서만, 생략하면 전부
+- 응답 `DocumentItem`에 `project_id` 필드가 포함된다
 
 ### 우리 서버 `GET /files/{name}` (9000) — 생성 문서 다운로드
 

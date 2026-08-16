@@ -84,7 +84,9 @@ def dense_retrieve(state: QueryState) -> dict:
     queries = search_queries_of(state)
     # 요청이 도메인을 안 정했으면 GENERAL(=도메인 절 없음)로 전 도메인 검색
     scope = state.get("requested_domain") or "GENERAL"
-    expr = build_acl_filter_expr(scope, state.get("user_department", ""))
+    expr = build_acl_filter_expr(
+        scope, state.get("user_department", ""), state.get("project_id") or ""
+    )
 
     embeddings = _embed_queries(queries)  # 쿼리가 여럿이어도 HTTP 1회
     candidates: list[dict] = []
