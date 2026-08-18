@@ -151,6 +151,9 @@ class DocumentDeleteOutput(BaseModel):
     """DELETE /documents/{name} 응답."""
 
     name: str = Field(description="삭제된 문서 파일명")
+    project_id: str = Field(
+        default="", description='삭제 대상의 소속 프로젝트 (""=전사 공용)', examples=[""]
+    )
     deleted_chunks: int = Field(description="삭제된 자식 청크 수")
     deleted_parents: int = Field(description="삭제된 부모 청크 수")
 

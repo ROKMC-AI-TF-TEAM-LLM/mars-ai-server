@@ -273,9 +273,23 @@ def test_노드_완료에_따른_status_안내() -> None:
     assert main._status_after_node("retry_search", {})[0] == "route"
 
 
+def test_act는_실행_결과를_알린다() -> None:
+    """검색(십수 초)과 다음 판단(십수 초) 사이가 통째로 무음이 되는 것을 막는다."""
+    stage, message = main._status_after_node(
+        "act", {"search_calls": 1, "retrieved_chunks": [{}, {}, {}]}
+    )
+    assert stage == "route"
+    assert "3건" in message  # 실행 후라 결과 건수를 말할 수 있다
+
+
+def test_상한을_다_쓴_act는_생성_안내를_낸다() -> None:
+    """다음이 agent가 아니라 곧바로 답변 생성이다."""
+    assert main._status_after_node("act", {"force_finish": True})[0] == "generate"
+
+
 def test_안내가_없는_노드는_status를_만들지_않는다() -> None:
-    """act는 다음 agent 라운드가 안내하고, 종착 노드는 안내할 다음 단계가 없다."""
-    for node in ("act", "verify", "fallback", "knowledge_answer", "deferred"):
+    """종착 노드는 안내할 다음 단계가 없다."""
+    for node in ("verify", "fallback", "knowledge_answer", "deferred"):
         assert main._status_after_node(node, {}) is None
     # 지연 도구 예약이 없으면 finalize·direct_answer도 안내하지 않는다
     assert main._status_after_node("finalize", {}) is None
