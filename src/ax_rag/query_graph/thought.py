@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 
 # 표시 상한. 60자 안팎을 프롬프트로 요청하고, 넘치면 여기서 자른다
-MAX_THOUGHT_CHARS = 100
+MAX_THOUGHT_CHARS = 200
 
 # 제어문자·개행 → 공백 (SSE 프레임은 JSON 한 줄이다)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")

@@ -62,6 +62,25 @@ def _agent_stage_status(state: QueryState) -> tuple[str, str] | None:
     return None
 
 
+def _act_stage_status(state: QueryState) -> tuple[str, str] | None:
+    """행동을 실행한 뒤, 결과를 알리고 다음 판단으로 넘어감을 알린다.
+
+    이 안내가 없으면 검색(십수 초)과 다음 라운드 판단(십수 초) 사이가 통째로
+    무음이 된다 (실측: 25초). 실행 **후**라 결과 건수를 말할 수 있어,
+    같은 공백을 메우면서 실제 정보도 준다.
+
+    상한을 다 써서 곧바로 답변으로 가는 경우는 agent가 아니라 여기서 끝나므로
+    "판단 중"이 아니라 생성 안내를 낸다.
+    """
+    if state.get("force_finish") or (state.get("agent_steps") or 0) >= get_config().MAX_AGENT_STEPS:
+        return ("generate", _GENERATE_MESSAGE)
+    found = len(state.get("retrieved_chunks") or [])
+    if not (state.get("search_calls") or 0):
+        # 검색이 아니라 도구를 실행한 경우 (전역일 계산 등)
+        return ("route", "다음 단계를 판단하는 중...")
+    return ("route", f"근거 {found}건을 확인했습니다. 더 찾을지 판단하는 중...")
+
+
 def _deferred_stage_status(state: QueryState) -> tuple[str, str] | None:
     """확정 답변 뒤에 실행될 지연 도구가 있으면 그 진행을 안내한다."""
     actions = state.get("deferred_actions") or []
@@ -82,6 +101,9 @@ def status_after_node(node_name: str, state: QueryState) -> tuple[str, str] | No
     if node_name == NODE_AGENT:
         # ReAct: 정해진 다음 행동을 실행 **전에** 알린다
         return _agent_stage_status(state)
+    if node_name == NODE_ACT:
+        # 실행 **후**: 결과를 알리고 다음 판단으로 넘어감을 알린다
+        return _act_stage_status(state)
     if node_name == NODE_RETRY_SEARCH:
         # 반려 후 다시 판단하러 가는 중 (다음 안내는 agent가 낸다)
         return ("route", "답변을 다시 검토하는 중...")
