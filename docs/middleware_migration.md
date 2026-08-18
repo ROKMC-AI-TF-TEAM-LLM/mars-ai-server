@@ -19,6 +19,7 @@
 | 프로젝트 삭제 | `DELETE /projects/{id}` | 기능 도입 시 | 문서를 하나씩 지워야 함 |
 | 문서 목록 프로젝트 필터 | `GET /documents` | 기능 도입 시 | — |
 | **프로젝트 지침 전달·입력 안내** | `POST /query` | 🟡 **운영 규칙 필요** | 지어낸 내용이 검증을 통과할 수 있다 |
+| **문서 삭제에 project_id 필요** | `DELETE /documents/{name}` | 기능 도입 시 | 프로젝트 문서가 안 지워진다 (전사만 대상) |
 | `status`에 `thought`·`step` 필드 | SSE | 참고 | — |
 | 이벤트 순서에 `notice` 삽입 | SSE | 참고 | 순서 가정 코드가 있으면 점검 |
 
@@ -120,6 +121,21 @@ status*  →  text*  →  file*  →  notice?  →  sources  →  done
 - **전사 공용 문서는 지우지 않는다.** 빈 값·형식 위반은 `400`
 - **동기 처리**다 — 색인 재빌드 때문에 수 초~수십 초 걸릴 수 있다. 타임아웃을 넉넉히 잡을 것
 - `404` 해당 프로젝트에 문서 없음 / `409` 다른 적재·삭제 진행 중
+
+### 삭제 — `DELETE /documents/{name}?project_id=proj-7f3a`
+
+문서 식별자가 **(project_id, name) 복합키**로 바뀌었다. 파일명이 같아도 프로젝트가
+다르면 별개 문서다 (부대마다 자기 `휴가규정.md`를 올릴 수 있다).
+
+```json
+{"name": "휴가규정.md", "project_id": "proj-7f3a", "deleted_chunks": 5, "deleted_parents": 5}
+```
+
+> ⚠️ **`project_id`를 생략하면 전사 공용 문서만 지운다.** 프로젝트 문서를 지우려면
+> 반드시 `project_id`를 함께 보내야 한다. 기존 호출(`?project_id` 없음)은 전사 문서만
+> 대상이라 그대로 안전하게 동작한다.
+
+같은 프로젝트에 같은 이름을 다시 올리면 **갱신**이다 (기존과 동일).
 
 ### 목록 — `GET /documents?project_id=proj-7f3a`
 
