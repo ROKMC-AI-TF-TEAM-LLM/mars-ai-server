@@ -39,7 +39,7 @@ def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
 
     project_id를 함께 싣는 이유: 프로젝트 채팅은 전사 + 프로젝트를 함께
     검색하므로 **같은 파일명 두 문서가 동시에 근거로 잡힐 수 있다.** 이름만
-    보내면 어느 쪽이 부대 규정인지 구분되지 않는다.
+    보내면 어느 쪽이 어떤 프로젝트인지 구분되지 않는다.
     """
     if not grounded:
         return []
