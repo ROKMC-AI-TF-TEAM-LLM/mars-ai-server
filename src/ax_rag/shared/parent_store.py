@@ -64,6 +64,24 @@ def get_parent(parent_id: str) -> str:
     return rows[0]["parent_text"] if rows else ""
 
 
-def delete_by_source_doc(source_doc: str) -> int:
-    """특정 문서의 부모 청크를 전부 삭제한다 (문서 갱신용). 삭제 건수 반환."""
-    return delete_by_filter(get_parent_collection(), f'source_doc == "{source_doc}"')
+# Milvus 표현식 길이 폭주 방지: parent_id in [...] 한 번에 넣을 개수
+_DELETE_BATCH = 200
+
+
+def delete_by_parent_ids(parent_ids: list[str]) -> int:
+    """parent_id 목록으로 부모 청크를 삭제한다. 삭제 건수 반환.
+
+    ★ 이름(source_doc)이 아니라 **실제 참조 관계**로 지운다. 부모 컬렉션에는
+    project_id가 없어서, 이름으로 지우면 같은 파일명을 쓰는 다른 프로젝트의
+    부모까지 사라진다 — 그 프로젝트의 자식은 parent_id가 가리키는 대상을 잃고
+    부모 치환이 조용히 빈 값을 반환한다 (오류도 안 난다).
+    """
+    ids = [pid for pid in parent_ids if pid]
+    if not ids:
+        return 0
+    deleted = 0
+    for start in range(0, len(ids), _DELETE_BATCH):
+        batch = ids[start : start + _DELETE_BATCH]
+        quoted = ", ".join(f'"{pid}"' for pid in batch)
+        deleted += delete_by_filter(get_parent_collection(), f"parent_id in [{quoted}]")
+    return deleted

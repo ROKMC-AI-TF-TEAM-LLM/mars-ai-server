@@ -47,6 +47,15 @@
 부모 청크에는 ACL·`project_id`가 없다. `parent_id`로만 조회되고, 그 `parent_id`는
 이미 ACL·프로젝트 필터를 통과한 자식 청크에서만 나오기 때문이다.
 
+⚠️ 그래서 **부모 삭제는 `source_doc`이 아니라 `parent_id`로 해야 한다**
+(`parent_store.delete_by_parent_ids`). 자식을 지우기 **전에** 참조를 모아 둘 것.
+
+### 문서 식별자
+
+**`(project_id, source_doc)` 복합키다.** 프로젝트마다 같은 파일명을 쓸 수 있으므로
+(부대별 "휴가규정.md") 이름만으로는 유일하지 않다. 적재 갱신·삭제 필터에서
+`project_id` 조건을 빠뜨리면 동명의 다른 프로젝트 문서가 사라진다.
+
 ## 3. TypedDict 스키마
 
 ```python
@@ -306,7 +315,7 @@ data: {"type":"file","name":"MARS_답변_20260720_1e7bdc.hwpx","url":"/files/MAR
 
 data: {"type":"notice","level":"warning","code":"ungrounded_knowledge","message":"이 답변은 내부 문서에서 근거를 찾지 못해 AI의 일반 지식으로 작성한 것입니다. ..."}
 
-data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
+data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3","project_id":""}]}
 
 data: {"type":"done"}
 ```
@@ -361,6 +370,10 @@ data: {"type":"done"}
   따라서 파이프라인은 finalize(또는 fallback) 도달 후 확정된 답변을
   text 이벤트로 분할해 순서대로 전송한다
 - `sources`는 스트림 마지막에 정확히 1회, `done` 이벤트 직전에 전송
+- `sources.items[].project_id`: 그 근거 문서의 소속 (`""`=전사 공용).
+  프로젝트 채팅은 전사 + 프로젝트를 함께 검색하므로 **같은 파일명 두 문서가
+  동시에 근거로 잡힐 수 있다** — 이름만으로는 구분되지 않아 함께 싣는다.
+  중복 제거도 `(project_id, name)` 복합키 기준이다
 - `page` 필드: 청크 메타데이터에 페이지 정보가 없으면 `null`.
   (페이지 추적이 필요하면 인덱싱 단계에서 chunk 메타데이터에
   `page` 필드 추가 — 현재 스키마엔 없음, 미확정 항목)
@@ -468,11 +481,18 @@ data: {"type":"done"}
 최근 작업 목록(최신순). 관리자 페이지가 진행 상태를 오래 보존해야 하면
 미들웨어가 job_id·상태를 자기 DB에 미러링하는 것을 권한다 (MARS는 인메모리)
 
-**`DELETE /documents/{name}`** — 문서 삭제 (name은 URL 인코딩)
+**`DELETE /documents/{name}?project_id=`** — 문서 삭제 (name은 URL 인코딩)
 
+- 문서 식별자는 **(project_id, name) 복합키**다. 파일명이 같아도 프로젝트가 다르면
+  별개 문서이며 서로 영향을 주지 않는다
+- **`project_id`를 생략하면 전사 공용 문서만** 삭제한다 (동명의 프로젝트 문서는 무사)
 - 자식·부모 청크 삭제 후 BM25 전체 재빌드. **동기 처리** — 수 초~수십 초
-- 응답: `{"name": str, "deleted_chunks": int, "deleted_parents": int}`
-- 404: 미적재 문서, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
+- 응답: `{"name": str, "project_id": str, "deleted_chunks": int, "deleted_parents": int}`
+- 404: 그 범위에 미적재, 409: 다른 적재/삭제 작업 진행 중 (10초 대기 후)
+
+> 부모 청크는 이름이 아니라 **자식이 참조하던 `parent_id`** 로 지운다. 부모 컬렉션에는
+> `project_id`가 없어서(§2 참조) 이름으로 지우면 동명의 다른 프로젝트 부모까지
+> 사라지고, 그 프로젝트의 자식은 부모 치환이 조용히 빈 값을 반환한다.
 
 **`DELETE /projects/{project_id}`** — 프로젝트 문서 일괄 삭제
 

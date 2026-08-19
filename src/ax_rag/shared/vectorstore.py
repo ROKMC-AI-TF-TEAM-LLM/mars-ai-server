@@ -153,10 +153,12 @@ def list_documents() -> list[dict]:
     rows = fetch_all_children(
         ["source_doc", "domain", "visibility", "owning_department", "project_id", "created_at"]
     )
-    documents: dict[str, dict] = {}
+    # 그룹 키가 **(project_id, source_doc) 복합키**다. 이름만으로 묶으면 부대마다
+    # 올린 동명 문서가 한 줄로 합쳐져 청크 수가 합산되고 소속이 뒤섞인다
+    documents: dict[tuple[str, str], dict] = {}
     for row in rows:
         entry = documents.setdefault(
-            row["source_doc"],
+            (row.get("project_id") or "", row["source_doc"]),
             {
                 "source_doc": row["source_doc"],
                 "domain": row["domain"],
@@ -169,7 +171,8 @@ def list_documents() -> list[dict]:
         )
         entry["chunk_count"] += 1
         entry["applied_at"] = max(entry["applied_at"], int(row.get("created_at") or 0))
-    return sorted(documents.values(), key=lambda d: d["source_doc"])
+    # 전사 문서를 먼저, 그다음 프로젝트별로 묶어 이름순
+    return sorted(documents.values(), key=lambda d: (d["project_id"], d["source_doc"]))
 
 
 def delete_by_filter(collection_name: str, expr: str) -> int:
@@ -182,9 +185,39 @@ def delete_by_filter(collection_name: str, expr: str) -> int:
     return int(result["delete_count"]) if isinstance(result, dict) else len(result)
 
 
-def delete_by_source_doc(source_doc: str) -> int:
-    """특정 문서의 자식 청크를 전부 삭제한다 (문서 갱신용). 삭제 건수 반환."""
-    return delete_by_filter(get_collection(), f'source_doc == "{source_doc}"')
+def _document_filter(source_doc: str, project_id: str) -> str:
+    """문서 1건을 가리키는 필터. **식별자는 (project_id, source_doc) 복합키다.**
+
+    프로젝트가 생기면서 파일명만으로는 문서가 유일하지 않다 — 부대마다 자기
+    "휴가규정.md"를 올릴 수 있다. project_id 조건을 빠뜨리면 동명의 남의 프로젝트
+    문서까지 지운다.
+    """
+    return f'source_doc == "{source_doc}" and project_id == "{project_id}"'
+
+
+def fetch_parent_ids(source_doc: str, project_id: str = "") -> list[str]:
+    """문서 1건에 속한 자식들의 parent_id 목록 (중복 제거).
+
+    부모 컬렉션에는 project_id가 없으므로(parent_id로만 조회된다) 부모를 이름으로
+    지우면 동명의 다른 프로젝트 부모까지 사라진다. 실제 참조 관계인 parent_id로
+    지우기 위해 자식 삭제 **전에** 모아 둔다.
+    """
+    rows = get_client().query(
+        get_collection(),
+        filter=_document_filter(source_doc, project_id),
+        output_fields=["parent_id"],
+        limit=_QUERY_LIMIT,
+    )
+    return sorted({str(row.get("parent_id") or "") for row in rows} - {""})
+
+
+def delete_by_source_doc(source_doc: str, project_id: str = "") -> int:
+    """문서 1건의 자식 청크를 삭제한다 (문서 갱신·삭제용). 삭제 건수 반환.
+
+    project_id 기본값 ""는 전사 공용 문서를 뜻한다 — 생략하면 프로젝트 문서는
+    건드리지 않는다.
+    """
+    return delete_by_filter(get_collection(), _document_filter(source_doc, project_id))
 
 
 def delete_by_project(project_id: str) -> int:

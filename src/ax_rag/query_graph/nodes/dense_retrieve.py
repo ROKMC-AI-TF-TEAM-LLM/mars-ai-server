@@ -25,6 +25,9 @@ _OUTPUT_FIELDS = [
     "domain",
     "owning_department",
     "visibility",
+    # 출처 표기용 — 같은 파일명이 전사·프로젝트에 동시에 있을 수 있어
+    # 이름만으로는 어느 문서인지 구분되지 않는다
+    "project_id",
 ]
 
 

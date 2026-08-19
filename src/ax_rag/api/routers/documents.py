@@ -229,7 +229,13 @@ async def upload_document(
         max_mb = _MAX_UPLOAD_BYTES // (1024 * 1024)
         raise HTTPException(status_code=413, detail=f"파일이 너무 크다 (최대 {max_mb}MB)")
 
+    # 스테이징 경로를 프로젝트별로 나눈다. 파일명만 쓰면 같은 이름을 올린 다른
+    # 프로젝트가 이 파일을 덮어쓰고, **적재는 백그라운드라** 나중에 실행되는 작업이
+    # 남의 내용을 자기 프로젝트로 적재한다 (파일 쓰기는 _LOCK 밖이라 직렬화되지 않는다).
+    # project_id는 validate_upload가 영숫자·밑줄·하이픈으로 제한하므로 경로 탈출은 없다
     upload_dir = Path(get_config().UPLOAD_DIR)
+    if project_normalized:
+        upload_dir = upload_dir / project_normalized
     upload_dir.mkdir(parents=True, exist_ok=True)
     saved_path = upload_dir / safe_name
     saved_path.write_bytes(content)
@@ -304,7 +310,10 @@ def get_ingest_job(job_id: str) -> IngestJobStatus:
     response_model=DocumentDeleteOutput,
     summary="문서 삭제",
     description=(
-        "문서의 자식·부모 청크를 전부 삭제하고 BM25 인덱스를 재빌드한다.\n\n"
+        "문서의 자식·부모 청크를 삭제하고 BM25 인덱스를 재빌드한다.\n\n"
+        "- 문서 식별자는 **(project_id, name) 복합키**다. 파일명이 같아도 프로젝트가 "
+        "다르면 별개 문서이며 서로 영향을 주지 않는다\n"
+        "- `project_id`를 생략하면 **전사 공용 문서만** 삭제한다 (프로젝트 문서는 무사)\n"
         "- `name`은 GET /documents가 반환한 문서 파일명 (한글·공백은 URL 인코딩)\n"
         "- **동기 처리**: BM25 전체 재빌드 때문에 수 초~수십 초 걸릴 수 있다\n"
         "- 404: 적재되지 않은 문서, 409: 다른 적재/삭제 작업이 진행 중 (10초 대기 후)\n\n"
@@ -313,21 +322,33 @@ def get_ingest_job(job_id: str) -> IngestJobStatus:
 )
 def delete_document(
     name: Annotated[str, PathParam(description="문서 파일명 (예: 휴가규정.pdf)")],
+    project_id: Annotated[
+        str,
+        Query(description='소속 프로젝트. 생략하면 전사 공용 문서("")만 삭제한다'),
+    ] = "",
 ) -> DocumentDeleteOutput:
     decoded = name.strip()
     if not decoded or '"' in decoded:
         raise HTTPException(status_code=400, detail="유효하지 않은 문서 파일명이다")
+    scope = ""
+    if project_id.strip():
+        try:
+            scope = validate_project_id_strict(project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        result = ingest.delete_document(decoded)
+        result = ingest.delete_document(decoded, project_id=scope)
     except ingest.IngestBusyError as exc:
         raise HTTPException(
             status_code=409,
             detail="다른 적재/삭제 작업이 진행 중이다. 잠시 후 다시 시도할 것",
         ) from exc
     if result["deleted_children"] == 0 and result["deleted_parents"] == 0:
-        raise HTTPException(status_code=404, detail=f"적재된 문서가 아니다: {decoded}")
+        where = f"프로젝트 {scope}" if scope else "전사 공용"
+        raise HTTPException(status_code=404, detail=f"{where}에 적재된 문서가 아니다: {decoded}")
     return DocumentDeleteOutput(
         name=decoded,
+        project_id=scope,
         deleted_chunks=result["deleted_children"],
         deleted_parents=result["deleted_parents"],
     )
