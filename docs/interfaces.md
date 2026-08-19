@@ -315,7 +315,7 @@ data: {"type":"file","name":"MARS_답변_20260720_1e7bdc.hwpx","url":"/files/MAR
 
 data: {"type":"notice","level":"warning","code":"ungrounded_knowledge","message":"이 답변은 내부 문서에서 근거를 찾지 못해 AI의 일반 지식으로 작성한 것입니다. ..."}
 
-data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3"}]}
+data: {"type":"sources","items":[{"name":"2026_휴가규정.pdf","page":"3","project_id":""}]}
 
 data: {"type":"done"}
 ```
@@ -370,6 +370,10 @@ data: {"type":"done"}
   따라서 파이프라인은 finalize(또는 fallback) 도달 후 확정된 답변을
   text 이벤트로 분할해 순서대로 전송한다
 - `sources`는 스트림 마지막에 정확히 1회, `done` 이벤트 직전에 전송
+- `sources.items[].project_id`: 그 근거 문서의 소속 (`""`=전사 공용).
+  프로젝트 채팅은 전사 + 프로젝트를 함께 검색하므로 **같은 파일명 두 문서가
+  동시에 근거로 잡힐 수 있다** — 이름만으로는 구분되지 않아 함께 싣는다.
+  중복 제거도 `(project_id, name)` 복합키 기준이다
 - `page` 필드: 청크 메타데이터에 페이지 정보가 없으면 `null`.
   (페이지 추적이 필요하면 인덱싱 단계에서 chunk 메타데이터에
   `page` 필드 추가 — 현재 스키마엔 없음, 미확정 항목)

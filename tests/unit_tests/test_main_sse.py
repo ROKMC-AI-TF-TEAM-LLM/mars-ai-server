@@ -306,8 +306,22 @@ def test_sources는_중복_없이_page_null로_만든다() -> None:
         {"text": "본문3", "source_doc": "경비규정.pdf"},
     ]
     assert main._build_sources(chunks, grounded=True) == [
-        {"name": "휴가규정.pdf", "page": None},
-        {"name": "경비규정.pdf", "page": None},
+        {"name": "휴가규정.pdf", "page": None, "project_id": ""},
+        {"name": "경비규정.pdf", "page": None, "project_id": ""},
+    ]
+
+
+def test_같은_이름이라도_프로젝트가_다르면_별개_출처다() -> None:
+    """★ 프로젝트 채팅은 전사 + 프로젝트를 함께 검색한다 — 이름만으로 중복
+    제거하면 부대 규정과 전사 규정 중 하나가 출처에서 사라진다."""
+    chunks = [
+        {"text": "전사", "source_doc": "휴가규정.md", "project_id": ""},
+        {"text": "부대", "source_doc": "휴가규정.md", "project_id": "proj-a"},
+        {"text": "부대2", "source_doc": "휴가규정.md", "project_id": "proj-a"},
+    ]
+    assert main._build_sources(chunks, grounded=True) == [
+        {"name": "휴가규정.md", "page": None, "project_id": ""},
+        {"name": "휴가규정.md", "page": None, "project_id": "proj-a"},
     ]
 
 

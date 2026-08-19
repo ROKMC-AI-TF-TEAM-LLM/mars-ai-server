@@ -20,6 +20,7 @@
 | 문서 목록 프로젝트 필터 | `GET /documents` | 기능 도입 시 | — |
 | **프로젝트 지침 전달·입력 안내** | `POST /query` | 🟡 **운영 규칙 필요** | 지어낸 내용이 검증을 통과할 수 있다 |
 | **문서 삭제에 project_id 필요** | `DELETE /documents/{name}` | 기능 도입 시 | 프로젝트 문서가 안 지워진다 (전사만 대상) |
+| `sources`에 `project_id` 추가 | SSE | 참고 | 같은 이름 출처의 소속을 구분 못 함 |
 | `status`에 `thought`·`step` 필드 | SSE | 참고 | — |
 | 이벤트 순서에 `notice` 삽입 | SSE | 참고 | 순서 가정 코드가 있으면 점검 |
 
@@ -80,6 +81,22 @@ status*  →  text*  →  file*  →  notice?  →  sources  →  done
 
 `sources`가 `done` 직전 마지막이라는 규칙은 그대로다.
 **"file 다음은 sources"로 가정한 코드가 있으면 점검이 필요하다.**
+
+## `sources`에 `project_id` 추가
+
+```json
+{"type": "sources", "items": [
+  {"name": "휴가규정.md", "page": null, "project_id": ""},
+  {"name": "휴가규정.md", "page": null, "project_id": "proj-af7"}
+]}
+```
+
+프로젝트 채팅은 **전사 + 프로젝트를 함께 검색**하므로 같은 파일명 두 문서가 동시에
+근거로 잡힐 수 있다. 이름만으로는 어느 쪽이 부대 규정인지 구분되지 않아 소속을 함께 싣는다.
+
+- `""` = 전사 공용, 값이 있으면 그 프로젝트 문서
+- 중복 제거도 `(project_id, name)` 기준이라 **위 예시처럼 같은 이름이 두 번 나올 수 있다**
+- 필드 추가라 무시해도 깨지지 않는다. 다만 표시하면 "우리 부대 문서" 뱃지를 붙일 수 있다
 
 ---
 

@@ -36,16 +36,26 @@ def _build_sources(retrieved_chunks: list[dict], grounded: bool) -> list[dict]:
     sources는 "답변의 근거로 실제 사용된 문서"다 — 검증을 통과하지 못한
     답변은 검색 결과를 근거로 쓰지 않았으므로 빈 목록을 반환한다.
     page는 청크 메타데이터에 페이지 정보가 없어 null이다 (미확정 항목).
+
+    project_id를 함께 싣는 이유: 프로젝트 채팅은 전사 + 프로젝트를 함께
+    검색하므로 **같은 파일명 두 문서가 동시에 근거로 잡힐 수 있다.** 이름만
+    보내면 어느 쪽이 부대 규정인지 구분되지 않는다.
     """
     if not grounded:
         return []
     sources: list[dict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for chunk in retrieved_chunks:
         name = chunk.get("source_doc")
-        if name and name not in seen:
-            seen.add(name)
-            sources.append({"name": name, "page": None})
+        if not name:
+            continue
+        # 중복 판정도 (project_id, name) 복합키다 — 같은 파일명이 전사와
+        # 프로젝트에 동시에 있으면 서로 다른 문서라 둘 다 출처로 남겨야 한다
+        project_id = str(chunk.get("project_id") or "")
+        key = (project_id, name)
+        if key not in seen:
+            seen.add(key)
+            sources.append({"name": name, "page": None, "project_id": project_id})
     return sources
 
 

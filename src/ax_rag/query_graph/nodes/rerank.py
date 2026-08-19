@@ -67,6 +67,8 @@ def rerank(state: QueryState) -> dict:
                 # 부모가 없으면 자식 텍스트로 폴백 (컨텍스트 공백 방지)
                 "text": parent_text or candidate["text"],
                 "source_doc": candidate["source_doc"],
+                # 출처 표기용 — 같은 파일명이 전사·프로젝트에 동시에 있을 수 있다
+                "project_id": candidate.get("project_id") or "",
                 "rerank_score": float(score),
             }
         )

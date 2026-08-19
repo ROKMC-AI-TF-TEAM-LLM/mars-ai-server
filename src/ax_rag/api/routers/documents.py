@@ -229,7 +229,13 @@ async def upload_document(
         max_mb = _MAX_UPLOAD_BYTES // (1024 * 1024)
         raise HTTPException(status_code=413, detail=f"파일이 너무 크다 (최대 {max_mb}MB)")
 
+    # 스테이징 경로를 프로젝트별로 나눈다. 파일명만 쓰면 같은 이름을 올린 다른
+    # 프로젝트가 이 파일을 덮어쓰고, **적재는 백그라운드라** 나중에 실행되는 작업이
+    # 남의 내용을 자기 프로젝트로 적재한다 (파일 쓰기는 _LOCK 밖이라 직렬화되지 않는다).
+    # project_id는 validate_upload가 영숫자·밑줄·하이픈으로 제한하므로 경로 탈출은 없다
     upload_dir = Path(get_config().UPLOAD_DIR)
+    if project_normalized:
+        upload_dir = upload_dir / project_normalized
     upload_dir.mkdir(parents=True, exist_ok=True)
     saved_path = upload_dir / safe_name
     saved_path.write_bytes(content)
