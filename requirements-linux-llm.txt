@@ -1,0 +1,14 @@
+# L40 운영 — venv-llm (vLLM 서빙 전용, 포트 8000)
+#
+# requirements.txt의 "서빙 코어" 블록과 동일하다.
+# venv-app과 **같은 환경에 설치할 수 없다**: vllm은 transformers==4.57.1을,
+# FlagEmbedding은 transformers==4.44.2를 정확히 못 박아 겹치는 버전이 없다.
+# 그래서 pip download도 두 파일을 따로 돌려야 한다 (한 번에 하면 ResolutionImpossible).
+
+vllm==0.11.0
+torch==2.8.0
+transformers==4.57.1
+torchvision==0.23.0
+torchaudio==2.8.0
+tokenizers==0.22.1
+triton==3.5.0

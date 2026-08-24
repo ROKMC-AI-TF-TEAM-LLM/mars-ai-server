@@ -1,0 +1,47 @@
+# 개발 노트북(Windows) 전용 의존성 — scripts/dev_setup.ps1이 설치하는 것과 동일.
+#
+# requirements.txt(L40 운영)를 그대로 쓰면 안 된다. 세 가지가 다르다:
+#
+# 1. vllm 계열 제외 — vLLM은 Windows를 지원하지 않는다.
+#    개발은 llama.cpp + GGUF로 서빙한다 (serving/start_llm_dev.ps1)
+# 2. milvus-lite 제외 — Windows 미지원.
+#    개발은 Docker Milvus standalone(localhost:19530)에 붙는다
+# 3. transformers는 **FlagEmbedding이 결정**한다 (4.44.x).
+#    운영의 4.57.1은 vllm 요구 버전이라 여기서는 쓰지 않는다
+#
+# 에어갭 반입 절차는 docs/deploy_l40.md §1 참조.
+
+# ── 개발 도구 ──
+pytest==8.3.4
+ruff==0.8.6
+
+# ── API 서버 ──
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# ── LangGraph / LangChain 스택 ──
+langgraph==0.2.62
+langchain-core==0.3.29
+langchain-openai==0.2.14
+langchain-text-splitters==0.3.4
+
+# ── 벡터DB 클라이언트 (milvus-lite 없이 Docker standalone에 접속) ──
+pymilvus==2.5.4
+
+# ── 하이브리드 검색: BM25 ──
+kiwipiepy==0.22.2
+bm25s==0.2.5
+
+# ── 문서 파서 (PDF) ──
+pdfplumber==0.11.10
+
+# ── 유틸 ──
+python-dotenv==1.0.1
+requests==2.32.3
+
+# ── 임베딩 / 리랭커 (transformers 상한이 낮아 마지막에 설치) ──
+# pymilvus 2.5.4가 pkg_resources를 요구해 setuptools<81을 함께 고정한다
+setuptools==75.6.0
+torch==2.8.0
+FlagEmbedding==1.3.3
