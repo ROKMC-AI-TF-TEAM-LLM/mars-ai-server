@@ -18,10 +18,23 @@
 wheel은 L40에서 안 맞는다 — 반드시 Linux x86_64 + Python 3.11에서 받을 것
 (WSL 또는 `docker run -it python:3.11-slim bash` 활용).
 
+⚠ `FlagEmbedding==1.3.3`은 **wheel이 없다** (1.4.0부터 제공). 순수 파이썬이라
+sdist로 받아도 에어갭에서 설치되므로 `--no-binary FlagEmbedding`을 준다.
+그 외에는 `--only-binary=:all:`로 sdist가 섞이지 않게 하는 것이 안전하다 —
+에어갭에는 컴파일러가 없다.
+
+🚨 **`pip download -r requirements.txt`는 실패한다** (`ResolutionImpossible`).
+`vllm(transformers==4.57.1)`과 `FlagEmbedding(transformers==4.44.2)`이 정확히
+못 박혀 있어 겹치는 버전이 없다 — venv를 나누는 이유가 다운로드에도 그대로 적용된다.
+**venv별 파일로 따로 받는다.**
+
 ```bash
-# ① 파이썬 패키지 (의존성 포함 전부)
-pip download -d wheels/ -r requirements.txt
-pip download -d wheels/ "setuptools==75.6.0"          # pymilvus의 pkg_resources 요구
+# ① 파이썬 패키지 (의존성 포함 전부) — venv 구성에 맞춰 두 번
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/wheels:/out" python:3.11-slim \
+  bash -c "pip download -d /out -r /src/requirements-linux-app.txt --no-binary FlagEmbedding"
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/wheels:/out" python:3.11-slim \
+  bash -c "pip download -d /out -r /src/requirements-linux-llm.txt"
+
 pip download -d wheels-eval/ -r requirements-eval.txt  # 평가 쓸 때만
 
 # ② 모델 3종 (HuggingFace에서 스냅샷)
@@ -50,25 +63,27 @@ L40에서는 다음과 같이 나눈다:
 | `venv-llm` | vLLM 서빙 전용 | requirements.txt의 "서빙 코어" 블록 (vllm, torch, transformers, torchvision, torchaudio, tokenizers, triton) |
 | `venv-app` | MARS 앱 + 임베딩/리랭커 서버 | 나머지 전부 + FlagEmbedding (transformers는 FlagEmbedding이 맞는 버전을 끌고 옴) |
 
+요구사항 파일이 venv별로 나뉘어 있으므로 그대로 쓴다 (패키지를 손으로 나열하지 않는다).
+
 ```bash
 tar xf mars.tar && cd mars-ai-server   # 또는 git clone mars.bundle
 
-# venv-llm
 python3.11 -m venv venv-llm
-venv-llm/bin/pip install --no-index --find-links wheels/ \
-    vllm==0.11.0 torch==2.8.0 transformers==4.57.1 torchvision==0.23.0 \
-    torchaudio==2.8.0 tokenizers==0.22.1 triton==3.5.0
+venv-llm/bin/pip install --no-index --find-links wheels/ -r requirements-linux-llm.txt
 
-# venv-app
 python3.11 -m venv venv-app
-venv-app/bin/pip install --no-index --find-links wheels/ setuptools==75.6.0
-venv-app/bin/pip install --no-index --find-links wheels/ \
-    langgraph==0.2.62 langchain-core==0.3.29 langchain-openai==0.2.14 \
-    langchain-text-splitters==0.3.4 pymilvus==2.5.4 milvus-lite==2.4.11 \
-    FlagEmbedding==1.3.3 kiwipiepy==0.22.2 bm25s==0.2.5 pdfplumber==0.11.10 \
-    fastapi==0.115.6 "uvicorn[standard]==0.34.0" pydantic==2.10.4 \
-    python-dotenv==1.0.1 requests==2.32.3
+venv-app/bin/pip install --no-index --find-links wheels/ -r requirements-linux-app.txt
+
+# 검증: 둘 다 통과해야 한다
+venv-llm/bin/pip check && venv-app/bin/pip check
 ```
+
+> `setuptools==75.6.0`은 `requirements-linux-app.txt` 맨 앞에 있어 따로 깔 필요가 없다.
+> 빠뜨리면 최신 setuptools가 깔려 `pymilvus`가 요구하는 `pkg_resources`가 없어 터진다.
+>
+> `triton`은 **3.4.0**이다. `requirements.txt`에 적힌 3.5.0은 `torch 2.8.0`이
+> `triton==3.4.0`을 정확히 못 박아 **설치 불가**다 (Windows에는 triton이 없어
+> 개발에서 드러나지 않는다).
 
 모델은 프로젝트의 `models/` 아래(또는 임의 경로)에 배치한다.
 
@@ -167,3 +182,92 @@ BM25 전체 재빌드가 동반되므로 야간 배치를 권장.
 | 로그 | DEBUG | INFO |
 | tool-calling | 잠정 통과 | **최종 검증 지점** |
 | dev_setup.ps1 / tools/ | 사용 | 사용 안 함 |
+
+---
+
+## 8. 개발 노트북(Windows) 에어갭 반입
+
+내부망 개발 노트북에도 같은 환경을 만들어야 할 때. **L40과 wheel을 공유할 수 없다**
+(OS·아키텍처 종속).
+
+### 8-1. 요구사항 파일
+
+`requirements.txt`를 쓰지 않는다. **`requirements-dev-windows.lock`** 을 쓴다:
+
+- `vllm` 계열 제외 — Windows 미지원 (llama.cpp로 서빙)
+- `milvus-lite` 제외 — Windows 미지원 (Docker Milvus standalone)
+- `transformers`는 **4.44.2** (FlagEmbedding이 결정). 운영의 4.57.1은 vllm 요구 버전
+- `torch`는 **CPU 빌드**(`2.8.0+cpu`) — 개발은 임베딩·리랭커를 CPU로 돌린다
+
+`.lock`은 테스트가 통과한 환경을 그대로 굳힌 것이다. 하위 의존성까지 고정돼 있어
+내부망에서 다른 버전이 깔릴 여지가 없다.
+
+### 8-2. wheel 받기 (인터넷 되는 Windows, 같은 Python 3.11)
+
+```powershell
+python -m pip download -d wheels-win --no-binary FlagEmbedding -r requirements-dev-windows.lock
+```
+
+받은 뒤 sdist 확인 — `FlagEmbedding`·`kiwipiepy_model` 둘만 나와야 정상이다
+(각각 순수 파이썬 / 사전 데이터라 컴파일 불필요):
+
+```powershell
+Get-ChildItem wheels-win | Where-Object { $_.Name -notlike "*.whl" }
+```
+
+### 8-3. 반입 용량 줄이기 — 공용 wheel 분리 (선택)
+
+`py3-none-any.whl`은 OS를 안 가리므로 Windows·Linux가 같은 파일을 쓴다.
+반입 승인 절차가 번거로우면 셋으로 나눈다 (실측: **55개 / 107MB** 절감,
+`kiwipiepy_model` 76MB가 대부분):
+
+```
+wheels-shared/   양쪽 공용 (py3-none-any)
+wheels-win/      Windows 전용 (win_amd64)
+wheels-linux/    Linux 전용 (manylinux)
+```
+
+`--find-links`를 여러 번 주면 되므로 설치 명령은 한 줄만 늘어난다.
+목록은 `scripts/wheel_list*.csv` 참조.
+
+### 8-4. Milvus 반입 — Docker 이미지 1개
+
+Windows는 `milvus-lite`를 못 쓰므로 **Docker standalone**(etcd 내장)으로 띄운다.
+별도 etcd·minio 컨테이너가 필요 없어 **이미지 하나면 된다**.
+
+```powershell
+# 인터넷 되는 곳에서
+docker pull milvusdb/milvus:v2.5.4
+docker save milvusdb/milvus:v2.5.4 -o milvus-v2.5.4.tar    # 약 2.4GB
+
+# 내부망에서
+docker load -i milvus-v2.5.4.tar
+```
+
+설정 파일 2개(`serving/milvus-dev/embedEtcd.yaml`, `user.yaml`)는 저장소에 있으므로
+소스와 함께 들어간다. 기동은 `scripts/dev_setup.ps1`의 [5/5] 단계와 동일하다.
+
+### 8-5. Windows 반입 목록
+
+| 항목 | 크기 | 비고 |
+|---|---|---|
+| Python 3.11.x 설치 파일 | ~30MB | 내부망에 없을 수 있다 |
+| wheel 묶음 | ~0.5GB | `requirements-dev-windows.lock` 기준 |
+| **Docker Desktop 설치 파일** | ~500MB | Milvus 구동에 필수 |
+| **Milvus 이미지 tar** | ~2.4GB | `docker save` |
+| `A.X-4.0-Light-Q4_K_M.gguf` | ~4.4GB | llama.cpp용 |
+| llama.cpp 릴리스 + cudart | ~50MB | `tools/llama.cpp/` |
+| `bge-m3`, `bge-reranker-v2-m3` | ~4GB | 임베딩·리랭커 |
+| 소스 (`git bundle`) | 수 MB | |
+
+### 8-6. 설치·검증
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --no-index --find-links wheels-win `
+    -r requirements-dev-windows.lock
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+`--no-index`가 핵심이다 — PyPI를 아예 보지 않으므로, 이게 통과하면 에어갭에서도 된다.
