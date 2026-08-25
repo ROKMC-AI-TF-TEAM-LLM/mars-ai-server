@@ -63,14 +63,24 @@ def _search(embedding: list[float], expr: str, query_index: int) -> list[dict]:
         entity = hit.get("entity", {})
         candidates.append(
             {
-                # pymilvus는 PK를 "id"가 아니라 실제 필드명(chunk_id) 키로 반환한다
-                "chunk_id": hit["chunk_id"],
+                "chunk_id": _primary_key(hit, entity),
                 "dense_score": float(hit["distance"]),
                 "query_index": query_index,
                 **{field: entity.get(field) for field in _OUTPUT_FIELDS},
             }
         )
     return candidates
+
+
+def _primary_key(hit: dict, entity: dict) -> str:
+    """search 결과에서 PK(chunk_id)를 꺼낸다.
+
+    ⚠️ Milvus 서버와 Milvus Lite의 반환 구조가 다르다 (실측):
+        서버 (개발 Docker) : hit["chunk_id"]            — 실제 필드명 키
+        Lite (운영 L40)    : hit["id"] / entity["chunk_id"] — PK는 "id"로 온다
+    한쪽만 읽으면 다른 환경에서 KeyError로 dense 검색이 통째로 죽는다.
+    """
+    return str(hit.get("chunk_id") or entity.get("chunk_id") or hit.get("id") or "")
 
 
 def search_queries_of(state: QueryState) -> list[str]:

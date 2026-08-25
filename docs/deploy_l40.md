@@ -27,16 +27,31 @@ vLLM은 `torch.compile`/Triton으로 **런타임에 커널을 JIT 컴파일**한
 못 쓰게 된다.** `response_format=json_schema`는 라우팅·검증의 **주 경로**이므로
 (answer_rate 76%→91%의 근거) 사실상 모든 질의가 이 경로를 탄다.
 
+**gcc만으로는 부족하다 — Python 헤더도 필요하다.** Triton이 `cuda_utils.c`를
+컴파일할 때 `-I/usr/include/python3.11`을 쓰므로 `Python.h`가 있어야 한다.
+없으면 gcc가 있어도 컴파일이 실패하고 결과는 같다 (`EngineDeadError`).
+
 ```bash
 # 확인
-gcc --version || echo "설치 필요"
+gcc --version                     || echo "gcc 설치 필요"
+ls /usr/include/python3.11/Python.h || echo "python3.11-devel 설치 필요"
 
 # RHEL 계열 (에어갭이면 RPM 반입 필요)
-dnf install -y gcc
+dnf install -y gcc python3.11-devel
 ```
 
-WSL AlmaLinux 9에서 실측: gcc 미설치 상태로 기동 → 실패, `--enforce-eager` →
-기동은 되나 첫 구조화 요청에서 엔진 사망, `gcc 11.5.0` 설치 후 정상.
+**반입 목록에 RPM을 넣을 것**: `gcc`, `python3.11-devel`과 그 의존성
+(`cpp`, `binutils`, `glibc-devel`, `kernel-headers`, `libxcrypt-devel`, `make` 등).
+인터넷 되는 같은 버전 RHEL/AlmaLinux에서 `dnf download --resolve gcc python3.11-devel`로 모은다.
+
+WSL AlmaLinux 9.8 실측 단계별 증상:
+
+| 상태 | 결과 |
+|---|---|
+| gcc 없음 | 기동 실패 (`InductorError`) |
+| gcc 없음 + `--enforce-eager` | 기동은 됨 → **첫 구조화 요청에서 엔진 사망** |
+| gcc 있음, 헤더 없음 | 기동됨 → 요청 시 `subprocess.CalledProcessError` → 엔진 사망 |
+| gcc + python3.11-devel | 정상 |
 
 ## 1. 반입물 준비 (인터넷 가능한 Linux 환경에서)
 
