@@ -10,7 +10,33 @@
 - 서버: L40 48GB × 1, Linux x86_64, **Python 3.11.x**
 - NVIDIA 드라이버: CUDA 12.x 호환 (vLLM 0.11.0 요구)
 - 외부 네트워크 차단 (에어갭) — 모든 반입은 물리 매체/내부 저장소 경유
-- Docker 불필요 (Milvus Lite는 pip 라이브러리), root 불필요
+- Docker 불필요 (Milvus Lite는 pip 라이브러리)
+- 🚨 **C 컴파일러(gcc) 필수** — 아래 참조
+
+### 🚨 gcc가 없으면 vLLM이 죽는다
+
+vLLM은 `torch.compile`/Triton으로 **런타임에 커널을 JIT 컴파일**한다. gcc가 없으면:
+
+| 증상 | 시점 |
+|---|---|
+| `InductorError: Failed to find C compiler` | **기동 실패** |
+| `--enforce-eager`를 주면 기동은 된다 | — |
+| 그래도 `apply_grammar_bitmask` → 같은 오류 → **`EngineDeadError`** | **첫 `json_schema` 요청** |
+
+두 번째가 특히 위험하다. 요청 하나가 실패하는 게 아니라 **엔진이 죽어 서버 전체가
+못 쓰게 된다.** `response_format=json_schema`는 라우팅·검증의 **주 경로**이므로
+(answer_rate 76%→91%의 근거) 사실상 모든 질의가 이 경로를 탄다.
+
+```bash
+# 확인
+gcc --version || echo "설치 필요"
+
+# RHEL 계열 (에어갭이면 RPM 반입 필요)
+dnf install -y gcc
+```
+
+WSL AlmaLinux 9에서 실측: gcc 미설치 상태로 기동 → 실패, `--enforce-eager` →
+기동은 되나 첫 구조화 요청에서 엔진 사망, `gcc 11.5.0` 설치 후 정상.
 
 ## 1. 반입물 준비 (인터넷 가능한 Linux 환경에서)
 
