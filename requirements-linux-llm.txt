@@ -11,4 +11,8 @@ transformers==4.57.1
 torchvision==0.23.0
 torchaudio==2.8.0
 tokenizers==0.22.1
-triton==3.5.0
+# ⚠️ requirements.txt는 triton==3.5.0으로 적혀 있으나 **설치 불가**다.
+# torch 2.8.0이 triton==3.4.0을 정확히 못 박으므로 3.5.0과 공존할 수 없다
+# (vllm 0.11.0은 triton을 직접 요구하지 않는다). Windows에는 triton이 없어
+# 개발에서 드러나지 않았고, 내부망 설치 시점에 터졌을 값이다
+triton==3.4.0
