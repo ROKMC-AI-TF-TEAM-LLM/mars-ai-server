@@ -30,7 +30,14 @@
   향후 문서 등급(대외비 등) 및 사용자 신원등급 매칭용. 삭제 금지
 - `created_at`: INT64 — unix timestamp
 
-인덱스: HNSW, `metric_type=COSINE`, `params={"M": 16, "efConstruction": 200}`
+인덱스: **AUTOINDEX**, `metric_type=COSINE`
+
+> 🚨 **HNSW를 쓰면 안 된다.** Milvus Lite(운영 L40)는 로컬 모드에서
+> `FLAT`·`IVF_FLAT`·`AUTOINDEX`만 지원하고, HNSW는 `create_collection` 단계에서
+> 거부한다 (`invalid index type: HNSW, local mode only support ...`).
+> 개발이 Docker standalone(풀 서버)을 쓰는 탓에 이 실패가 **운영에서만** 드러난다.
+> `AUTOINDEX`는 Lite·서버 양쪽에서 동작하므로 같은 코드가 두 환경을 모두 커버한다.
+> 인덱스 타입 변경은 컬렉션 재생성이 필요하다 — `scripts/migrate_index_type.py`
 
 > **스키마 변경 시 마이그레이션**: `milvus-lite`는 기존 컬렉션에 필드를 추가할 수
 > 없다 (Milvus 2.5+ 기능). `scripts/migrate_project_id.py`가 기존 청크를 **임베딩까지

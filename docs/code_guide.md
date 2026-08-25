@@ -135,7 +135,7 @@ def get_llm() -> ChatOpenAI:
 | 필드 | 용도 |
 |---|---|
 | chunk_id (PK) | uuid4 hex |
-| embedding FLOAT_VECTOR(1024) | BGE-M3 dense 벡터. HNSW/COSINE 인덱스 |
+| embedding FLOAT_VECTOR(1024) | BGE-M3 dense 벡터. AUTOINDEX/COSINE (Lite는 HNSW 미지원) |
 | text VARCHAR(4000) | 맥락 헤더 포함 자식 본문 |
 | parent_id | document_parents 조회 키 |
 | source_doc, chunk_index | 문서명, 문서 내 순번 |

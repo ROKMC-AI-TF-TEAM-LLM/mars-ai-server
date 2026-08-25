@@ -79,11 +79,17 @@ def create_collection(drop_existing: bool = False) -> str:
     schema.add_field("created_at", DataType.INT64)
 
     index_params = client.prepare_index_params()
+    # ⚠️ HNSW를 쓰면 안 된다. Milvus Lite(운영 L40)는 로컬 모드에서
+    # FLAT·IVF_FLAT·AUTOINDEX만 지원하고 HNSW는 create_collection 단계에서 거부한다
+    # ("invalid index type: HNSW, local mode only support ..."). 개발이 Docker
+    # standalone(풀 서버)을 쓰는 탓에 이 실패가 운영에서만 드러났다.
+    #
+    # AUTOINDEX는 양쪽 모두에서 동작한다 — Lite는 로컬 인덱스로, 서버 모드는
+    # Milvus가 코퍼스 규모에 맞는 인덱스를 알아서 고른다
     index_params.add_index(
         field_name="embedding",
-        index_type="HNSW",
+        index_type="AUTOINDEX",
         metric_type="COSINE",
-        params={"M": 16, "efConstruction": 200},
     )
     # Strong 정합성: 적재 직후 BM25 재빌드용 전체 조회가 방금 insert를 봐야 한다
     client.create_collection(
