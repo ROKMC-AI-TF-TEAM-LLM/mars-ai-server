@@ -91,7 +91,47 @@ EOF
 git bundle create mars.bundle main
 ```
 
-반입 목록: `wheels/`, `models/` 3종, `mars.bundle`(또는 소스 tar).
+```bash
+# ④ OS 패키지 (RPM) — 없으면 vLLM이 죽는다. §0 참조
+#    같은 버전의 RHEL/AlmaLinux에서 받아야 한다
+dnf download --resolve --destdir rpms/ gcc gcc-c++ python3.11-devel
+```
+
+### 1-1. L40 반입 목록 (체크리스트)
+
+| ☐ | 항목 | 크기(약) | 없으면 생기는 일 |
+|---|---|---:|---|
+| ☐ | `wheels/` (app + llm 두 벌) | ~5 GB | 설치 불가 |
+| ☐ | **`rpms/` (gcc, python3.11-devel + 의존성)** | ~50 MB | **첫 질의에 엔진 사망** ★ |
+| ☐ | `models/A.X-4.0-Light` (fp16 원본) | ~15 GB | LLM 기동 불가 |
+| ☐ | `models/bge-m3` | ~2.3 GB | 임베딩 불가 |
+| ☐ | `models/bge-reranker-v2-m3` | ~2.3 GB | 리랭크 불가 |
+| ☐ | `mars.bundle` (소스) | 수 MB | — |
+| ☐ | Python 3.11.x (OS에 없으면) | ~30 MB | 전부 불가 |
+
+**합계 약 25 GB.** Docker 이미지는 **필요 없다** (Milvus Lite는 pip 라이브러리).
+
+> ★ 표시가 가장 위험하다. RPM을 빠뜨려도 **설치와 기동은 성공하고**,
+> 실사용 첫 질의에서 엔진이 죽는다. §0과 `docs/troubleshooting.md` ⑤⑥ 참조.
+
+### 1-2. 반입 전 검증 (인터넷 되는 곳에서)
+
+물리 반입은 되돌리기 비싸므로, **떠나기 전에** 확인한다.
+
+```bash
+# wheel 목록에 setuptools가 있는가 (pip freeze는 기본 제외한다)
+ls wheels/ | grep -i setuptools || echo "★ setuptools 누락 — pymilvus가 터진다"
+
+# triton이 3.4.0인가 (3.5.0은 torch 2.8.0과 설치 불가)
+ls wheels/ | grep -i triton
+
+# 에어갭 설치 예행연습: --no-index로 PyPI를 아예 차단하고 깔아 본다
+docker run --rm -v "$PWD:/src:ro" python:3.11-slim bash -c \
+  "python -m venv /tmp/v && /tmp/v/bin/pip install --no-index \
+   --find-links /src/wheels -r /src/requirements-linux-app.txt && /tmp/v/bin/pip check"
+```
+
+마지막 명령이 통과하면 에어갭에서도 통과한다. **`--no-index`가 핵심이다.**
 
 ## 2. 설치 — venv를 반드시 2개로 분리
 
@@ -152,30 +192,87 @@ TRANSFORMERS_OFFLINE=1
 
 `serving/start_vllm.sh`의 모델 경로도 실제 반입 경로로 수정한다.
 
-## 4. 기동 (순서대로, 각 프로세스 독립 실행)
+## 4. 기동 매뉴얼
 
-```bash
-# ① vLLM :8000 — venv-llm (기동 수 분 소요, 약 37GB VRAM 선점)
-source venv-llm/bin/activate && bash serving/start_vllm.sh
+### 4-0. 순서를 지켜야 하는 이유
 
-# ② 임베딩 :8001 — venv-app
-PYTHONPATH=src venv-app/bin/python serving/embedding_server.py
-
-# ③ 리랭커 :8002 — venv-app
-PYTHONPATH=src venv-app/bin/python serving/reranker_server.py
-
-# ④ 문서 적재 (최초 1회 / 갱신 시)
-PYTHONPATH=src venv-app/bin/python scripts/bulk_ingest.py \
-    --dir /srv/mars/docs_in --domain GENERAL --department HQ --visibility ALL
-
-# ⑤ MARS API :9000 — venv-app, ★ 단일 워커 강제 (--workers 금지, Milvus Lite 파일 락)
-PYTHONPATH=src venv-app/bin/python -m uvicorn main:app --host 0.0.0.0 --port 9000
+```
+① vLLM(8000) → ② 임베딩(8001) → ③ 리랭커(8002) → ④ 적재 → ⑤ API(9000)
 ```
 
-상시 운영은 systemd 유닛 4개(또는 tmux/supervisor)로 감싸는 것을 권장.
-재기동 순서는 항상 vLLM → 임베딩 → 리랭커 → main.py.
+**vLLM을 반드시 먼저** 올린다. vLLM은 VRAM을 큰 연속 블록으로 선점하므로,
+임베딩·리랭커가 먼저 자리를 잡으면 파편화로 기동이 실패한다.
+재기동할 때도 같은 순서다.
 
-VRAM 예산: vLLM 0.78×48≈37GB + BGE-M3 1~2GB + 리랭커 1.6GB ≈ 41GB (여유 ~7GB).
+**띄우기 전에 이미 떠 있는지 확인한다** — 중복 기동은 VRAM 부족으로 실패하는데,
+오류 메시지가 "메모리 부족"이라 원인을 착각하기 쉽다.
+
+```bash
+curl -s localhost:8000/v1/models >/dev/null && echo "이미 떠 있음" || echo "비어 있음"
+```
+
+### 4-1. 기동
+
+```bash
+cd /srv/mars
+
+# ① vLLM :8000 — venv-llm (기동 수 분 소요, 약 37GB VRAM 선점)
+setsid bash serving/start_vllm.sh > /var/log/mars/vllm.log 2>&1 < /dev/null &
+
+# ② 임베딩 :8001 — venv-app
+PYTHONPATH=src setsid venv-app/bin/python serving/embedding_server.py \
+    > /var/log/mars/embedding.log 2>&1 < /dev/null &
+
+# ③ 리랭커 :8002 — venv-app
+PYTHONPATH=src setsid venv-app/bin/python serving/reranker_server.py \
+    > /var/log/mars/reranker.log 2>&1 < /dev/null &
+
+# ④ 문서 적재 (최초 1회 / 갱신 시) — ★ 도메인은 문서별로 지정한다
+PYTHONPATH=src venv-app/bin/python scripts/bulk_ingest.py \
+    --dir /srv/mars/docs_in/훈령 --domain DIRECTIVE --department HQ --visibility ALL
+
+# ⑤ MARS API :9000 — venv-app, ★ 단일 워커 강제 (--workers 금지, Milvus Lite 파일 락)
+PYTHONPATH=src setsid venv-app/bin/python -m uvicorn main:app \
+    --host 0.0.0.0 --port 9000 > /var/log/mars/api.log 2>&1 < /dev/null &
+```
+
+> `setsid` 와 `< /dev/null` 이 필요하다. `&` 만 쓰면 **터미널을 닫을 때 함께 죽는다.**
+> systemd로 감싸면 이 문제가 사라지므로 상시 운영은 systemd 유닛 4개를 권장한다.
+
+> ★ **`--domain`은 디렉터리마다 따로 준다.** 전체를 한 번에 한 도메인으로 적재하면
+> 훈령이 `HR`로 들어가는 식이 되어 도메인 한정 검색에서 배제된다
+> (실측: `hit@fuse` 100% → 88.5%, `docs/troubleshooting.md` ⑬).
+
+### 4-2. 기동 확인
+
+```bash
+until curl -s -m 3 localhost:8000/v1/models >/dev/null; do sleep 10; done; echo ":8000 OK"
+for p in 8001 8002 9000; do
+  until curl -s -m 3 "localhost:$p/health" >/dev/null; do sleep 5; done; echo ":$p OK"
+done
+```
+
+**여기까지 통과해도 배포가 끝난 게 아니다.** §5의 `json_schema` 검증을 반드시 거친다.
+
+### 4-3. 정지
+
+```bash
+pkill -f "bin/vllm"          # ⚠️ pkill -f "vllm serve"는 자기 자신을 죽인다
+pkill -f embedding_server
+pkill -f reranker_server
+pkill -f "uvicorn main:app"
+```
+
+### 4-4. VRAM 예산
+
+| 프로세스 | VRAM |
+|---|---:|
+| vLLM (0.78 × 48GB) | ~37 GB |
+| BGE-M3 임베딩 | 1~2 GB |
+| bge-reranker-v2-m3 | ~1.6 GB |
+| **합계** | **~41 GB** (여유 ~7 GB) |
+
+개발 노트북(6GB)과 달리 L40은 여유가 있어 임베딩·리랭커를 **`cuda`로 둔다.**
 
 ## 5. 배포 검증 체크리스트 (roadmap 7단계)
 
@@ -189,12 +286,30 @@ curl localhost:9000/documents        # 적재 인벤토리
 make test-all                        # 통합 테스트 14개 (venv-app에 pytest 필요 시 wheels로 설치)
 ```
 
+### 🚨 헬스체크만으로 끝내지 않는다
+
+`python3.11-devel`이 없으면 **위 5개가 전부 통과하고 첫 실사용 질의에서 엔진이 죽는다.**
+구조화 출력은 기동 시점에 컴파일하지 않기 때문이다. 아래를 반드시 실행한다.
+
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"'"$AX_MODEL_NAME"'","messages":[{"role":"user","content":"테스트"}],
+       "response_format":{"type":"json_schema","json_schema":{"name":"t","schema":
+       {"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}}}}'
+```
+
+**이 요청이 성공해야 배포가 끝난 것이다.** 실패하거나 엔진이 죽으면 §0으로 돌아간다.
+
+- [ ] **`json_schema` 요청 1건 성공** (위 명령) ★ 가장 중요
 - [ ] **아웃바운드 0건 실측**: 네트워크 차단 상태에서 전체 스택 기동 성공 확인
       (모델 경로가 없으면 즉시 실패해야 정상 — Hub 폴백 없음)
 - [ ] **tool-calling 성공률**: 라우터/검증의 1차 성공률 측정.
       로그에서 `tool-call 파싱 실패` WARNING 빈도로 확인 (3단 폴백 발동률)
-- [ ] Milvus Lite가 HNSW 인덱스와 query_iterator를 지원하는지 확인
-      (미지원 시: 인덱스 타입 조정 / iterator 폴백 경고 로그 확인)
+- [ ] 기동 로그에 `Milvus Lite(임베디드) 모드로 접속한다`가 찍히는지 확인
+      (`서버 모드`가 찍히면 `.env`의 `MILVUS_LITE_PATH`가 잘못됐다)
+- [ ] `query_iterator` 폴백 경고가 없는지 확인 (있으면 16,384행까지만 조회된다)
+- [ ] 문서별 도메인이 올바른지 (`scripts/eval_retrieval.py` — `hit@fuse` 확인)
 - [ ] `vllm bench serve`로 동시성 파라미터(max_num_seqs) 확정
 - [ ] chars_per_token=2.2 근사를 실제 군 문서로 보정 (config.CHARS_PER_TOKEN)
 - [ ] SSE E2E: `curl -N`으로 status → text → sources → done 순서 확인
@@ -271,22 +386,89 @@ wheels-linux/    Linux 전용 (manylinux)
 `--find-links`를 여러 번 주면 되므로 설치 명령은 한 줄만 늘어난다.
 목록은 `scripts/wheel_list*.csv` 참조.
 
-### 8-4. Milvus 반입 — Docker 이미지 1개
+### 8-4. Milvus 반입·구동 (Windows) — Docker 이미지 1개
 
-Windows는 `milvus-lite`를 못 쓰므로 **Docker standalone**(etcd 내장)으로 띄운다.
-별도 etcd·minio 컨테이너가 필요 없어 **이미지 하나면 된다**.
+Windows에는 `milvus-lite` 휠이 없다. **Docker standalone**(etcd 내장)으로 띄운다.
+별도 etcd·MinIO 컨테이너가 필요 없어 **이미지 하나면 된다**.
+
+> 코드는 `MILVUS_LITE_PATH` 값의 형태로 두 모드를 자동 판별한다
+> ([vectorstore.py](../src/ax_rag/shared/vectorstore.py)의 `get_client`).
+> 값이 `http://...` 면 서버 모드, 파일 경로면 Lite 모드다.
+> Windows에서 파일 경로를 주면 **해법을 알려주는 오류**와 함께 즉시 멈춘다.
+
+#### ① 반입
 
 ```powershell
-# 인터넷 되는 곳에서
+# 인터넷 되는 곳에서 — 태그를 반드시 고정한다 (pymilvus 2.5.4와 짝)
 docker pull milvusdb/milvus:v2.5.4
 docker save milvusdb/milvus:v2.5.4 -o milvus-v2.5.4.tar    # 약 2.4GB
 
 # 내부망에서
 docker load -i milvus-v2.5.4.tar
+docker images milvusdb/milvus                              # 태그 확인
 ```
 
-설정 파일 2개(`serving/milvus-dev/embedEtcd.yaml`, `user.yaml`)는 저장소에 있으므로
-소스와 함께 들어간다. 기동은 `scripts/dev_setup.ps1`의 [5/5] 단계와 동일하다.
+**Docker Desktop 설치 파일(~500MB)도 함께 반입해야 한다.** 내부망 Windows에
+Docker가 없으면 Milvus를 띄울 방법이 없다.
+
+#### ② 기동
+
+설정 파일 2개(`embedEtcd.yaml`, `user.yaml`)는 저장소에 있으므로 소스와 함께 들어온다.
+
+```powershell
+docker compose -f serving/milvus-dev/docker-compose.yml up -d
+docker compose -f serving/milvus-dev/docker-compose.yml ps
+```
+
+`scripts/dev_setup.ps1`의 [5/5] 단계도 **같은 컨테이너**(`ax-milvus-dev`)를 만든다.
+이미지·볼륨이 같아 둘을 섞어 써도 데이터가 갈리지 않는다.
+
+#### ③ .env 설정
+
+```powershell
+MILVUS_LITE_PATH=http://localhost:19530     # ★ 파일 경로가 아니다
+EMBEDDING_DEVICE=cpu                        # 노트북 GPU는 LLM이 쓴다
+RERANKER_DEVICE=cpu
+```
+
+`.env.dev.example`이 이 값들로 되어 있으므로 그대로 복사하면 된다.
+
+#### ④ 확인
+
+```powershell
+curl http://localhost:9091/healthz          # Milvus 자체 헬스체크
+.\.venv\Scripts\python.exe -c "from pymilvus import MilvusClient; `
+    print(MilvusClient('http://localhost:19530').list_collections())"
+```
+
+기동 로그에 `Milvus 서버 모드로 접속한다`가 찍히면 정상이다.
+
+#### ⑤ 정지·정리
+
+```powershell
+docker compose -f serving/milvus-dev/docker-compose.yml down       # 정지 (데이터 유지)
+docker compose -f serving/milvus-dev/docker-compose.yml down -v    # 데이터까지 삭제
+```
+
+#### ⚠️ Docker Milvus로 검증한 것은 운영 검증이 아니다
+
+**서버 모드와 Lite는 동작이 다르다.** 실제로 두 건이 운영에서만 터졌다:
+
+| | 서버 (Windows 개발) | Lite (운영 L40) |
+|---|---|---|
+| HNSW 인덱스 | 수용 | **거부** → 컬렉션 생성 실패 |
+| search 결과 PK | `hit["chunk_id"]` | `hit["id"]` → **`KeyError`** |
+
+둘 다 코드에서 해결했지만(`AUTOINDEX`, `_primary_key`), **같은 종류의 차이가 또
+있을 수 있다.** Windows Docker Milvus는 로직·프롬프트 개발용으로만 쓰고,
+**배포 전 최종 검증은 반드시 Lite 환경(WSL 또는 L40)에서** 한다.
+상세는 `docs/troubleshooting.md` ⑩⑪⑫.
+
+#### 앱만 Windows에 두고 Milvus를 WSL에 둘 수는 없다
+
+Milvus Lite는 서버가 아니라 **임베디드 라이브러리**다. **유닉스 도메인 소켓**으로
+통신하므로 포워딩할 TCP 포트가 없고, 동봉 바이너리가 리눅스 ELF다.
+vLLM·임베딩·리랭커는 TCP라 WSL 분리가 가능하지만 **Milvus Lite는 불가능하다.**
 
 ### 8-5. Windows 반입 목록
 

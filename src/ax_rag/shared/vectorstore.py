@@ -1,7 +1,11 @@
-"""Milvus Lite 자식 청크 컬렉션 company_docs (interfaces.md §2).
+"""자식 청크 컬렉션 company_docs (interfaces.md §2).
 
-Milvus Lite는 임베디드 라이브러리라 포트가 없고, MilvusClient(로컬 파일)로
-접속한다. 단일 uvicorn 워커 전제 (파일 락 충돌 방지, CLAUDE.md).
+접속 모드는 MILVUS_LITE_PATH 값의 형태로 자동 결정된다 (get_client 참조).
+운영 L40과 WSL은 Milvus Lite(임베디드 파일), 개발 Windows는 milvus-lite
+휠이 없어 Docker standalone URI를 쓴다.
+
+Lite는 포트가 없는 임베디드 라이브러리이므로 단일 uvicorn 워커를 전제한다
+(파일 락 충돌 방지, CLAUDE.md).
 
 MilvusClient 기반이므로 create_collection/get_collection은 ORM Collection
 객체 대신 컬렉션 이름(str)을 반환한다. 조작은 get_client()를 통해 한다.
@@ -9,7 +13,9 @@ MilvusClient 기반이므로 create_collection/get_collection은 ORM Collection
 
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
+from importlib.util import find_spec
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -30,22 +36,61 @@ _QUERY_LIMIT = 16384
 _ITERATOR_BATCH = 2000
 
 
+def is_server_uri(uri: str) -> bool:
+    """접속 대상이 Milvus 서버(URI)인지 Lite 파일 경로인지 판별한다.
+
+    같은 설정값(MILVUS_LITE_PATH)이 두 모드를 겸한다 — 운영 L40은 Lite 파일,
+    개발 Windows는 Docker standalone URI다.
+    """
+    return uri.startswith(("http://", "https://", "tcp://"))
+
+
+def _check_localhost_only(uri: str) -> None:
+    """에어갭 규칙: Milvus 서버 URI는 localhost만 허용한다 (CLAUDE.md)."""
+    host = urlparse(uri).hostname
+    if host not in ("localhost", "127.0.0.1"):
+        raise ValueError(f"Milvus URI에 localhost가 아닌 호스트는 허용되지 않는다: {uri}")
+
+
+def _check_lite_available(uri: str) -> None:
+    """Lite 파일 모드가 이 플랫폼에서 가능한지 확인한다.
+
+    milvus-lite는 리눅스·macOS 전용이라 Windows에는 휠이 없다. 확인 없이
+    MilvusClient에 넘기면 `ModuleNotFoundError: No module named 'milvus_lite'`
+    라는, 원인도 해법도 알려주지 않는 오류가 난다. 여기서 미리 잡아 준다.
+    """
+    if find_spec("milvus_lite") is not None:
+        return
+    raise RuntimeError(
+        f"Milvus Lite를 쓸 수 없는 환경인데 파일 경로가 지정됐다: MILVUS_LITE_PATH={uri}\n"
+        f"  현재 플랫폼: {sys.platform} (milvus-lite는 리눅스·macOS 전용)\n"
+        "  Windows에서는 Docker Milvus standalone을 띄우고 URI로 지정한다:\n"
+        "    docker compose -f serving/milvus-dev/docker-compose.yml up -d\n"
+        "    MILVUS_LITE_PATH=http://localhost:19530\n"
+        "  자세한 절차는 docs/deploy_l40.md의 Windows 항목을 참조한다."
+    )
+
+
 @lru_cache(maxsize=1)
 def get_client() -> MilvusClient:
-    """Milvus 클라이언트 싱글턴.
+    """Milvus 클라이언트 싱글턴. 설정값 형태로 접속 모드를 자동 판별한다.
 
-    운영(L40)은 Milvus Lite 로컬 파일 경로를 쓴다. 개발 노트북(Windows)은
-    Milvus Lite 미지원이라 localhost의 Milvus standalone URI
-    (http://localhost:19530)도 허용한다. 에어갭 규칙상 URI는 localhost만 가능.
+    | 값의 형태                  | 모드            | 쓰는 환경        |
+    |---------------------------|-----------------|-----------------|
+    | ./data/milvus_ax.db       | Lite (임베디드) | 운영 L40, WSL   |
+    | http://localhost:19530    | 서버 (Docker)   | 개발 Windows    |
+
+    두 모드의 동작이 미묘하게 다르므로(인덱스 타입 제약, search 결과의 PK 위치)
+    어느 쪽으로 붙었는지 기동 로그에 남긴다 — docs/troubleshooting.md ⑩⑪.
     """
-    config = get_config()
-    uri = config.MILVUS_LITE_PATH
-    if uri.startswith("http"):
-        host = urlparse(uri).hostname
-        if host not in ("localhost", "127.0.0.1"):
-            raise ValueError(f"Milvus URI에 localhost가 아닌 호스트는 허용되지 않는다: {uri}")
+    uri = get_config().MILVUS_LITE_PATH
+    if is_server_uri(uri):
+        _check_localhost_only(uri)
+        logger.info("Milvus 서버 모드로 접속한다: %s", uri)
     else:
+        _check_lite_available(uri)
         Path(uri).parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Milvus Lite(임베디드) 모드로 접속한다: %s", uri)
     return MilvusClient(uri)
 
 
