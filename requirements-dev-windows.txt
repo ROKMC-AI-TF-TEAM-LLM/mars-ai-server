@@ -1,13 +1,14 @@
 # 개발 노트북(Windows) 전용 의존성 — scripts/dev_setup.ps1이 설치하는 것과 동일.
 #
-# requirements.txt(L40 운영)를 그대로 쓰면 안 된다. 세 가지가 다르다:
+# requirements.txt(L40 운영)를 그대로 쓰면 안 된다. 두 가지가 다르다:
 #
 # 1. vllm 계열 제외 — vLLM은 Windows를 지원하지 않는다.
 #    개발은 llama.cpp + GGUF로 서빙한다 (serving/start_llm_dev.ps1)
-# 2. milvus-lite 제외 — Windows 미지원.
-#    개발은 Docker Milvus standalone(localhost:19530)에 붙는다
-# 3. transformers는 **FlagEmbedding이 결정**한다 (4.44.x).
+# 2. transformers는 **FlagEmbedding이 결정**한다 (4.44.x).
 #    운영의 4.57.1은 vllm 요구 버전이라 여기서는 쓰지 않는다
+#
+# 벡터DB는 이제 운영과 **같다** — milvus-lite 3.x가 순수 파이썬이라 Windows에서도
+# 돈다. Docker Milvus는 더 이상 필요 없다 (docs/milvus_lite_3x.md)
 #
 # 에어갭 반입 절차는 docs/deploy_l40.md §1 참조.
 
@@ -26,8 +27,10 @@ langchain-core==0.3.29
 langchain-openai==0.2.14
 langchain-text-splitters==0.3.4
 
-# ── 벡터DB 클라이언트 (milvus-lite 없이 Docker standalone에 접속) ──
+# ── 벡터DB (운영과 동일한 Milvus Lite. Docker 불필요) ──
 pymilvus==2.5.4
+milvus-lite==3.2.1
+faiss-cpu==1.15.0
 
 # ── 하이브리드 검색: BM25 ──
 kiwipiepy==0.22.2
@@ -43,5 +46,9 @@ requests==2.32.3
 # ── 임베딩 / 리랭커 (transformers 상한이 낮아 마지막에 설치) ──
 # pymilvus 2.5.4가 pkg_resources를 요구해 setuptools<81을 함께 고정한다
 setuptools==75.6.0
+# FlagEmbedding은 wheel이 없어 sdist로 설치된다 — 빌드에 wheel 패키지가 필요하다.
+# pip freeze가 setuptools·pip·wheel을 기본 제외하므로 명시하지 않으면
+# 에어갭에서 "No matching distribution found for wheel"로 실패한다
+wheel==0.45.1
 torch==2.8.0
 FlagEmbedding==1.3.3

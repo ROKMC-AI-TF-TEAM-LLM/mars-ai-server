@@ -83,7 +83,25 @@ lock에 없으면 에어갭에서 pip이 기본 제공하는 **최신 setuptools
 
 **해결** — lock 생성 시 `pip list --format=freeze` 를 쓰거나 setuptools를 명시적으로 추가.
 
-**재발 방지** — lock 파일을 만든 뒤 `setuptools` 가 있는지 반드시 눈으로 확인한다.
+**같은 이유로 `wheel` 도 빠진다** — `pip freeze` 가 제외하는 건 셋이다
+(`setuptools`·`pip`·`wheel`). `FlagEmbedding` 은 wheel이 없어 **sdist로 설치되는데,
+sdist 빌드에는 `wheel` 패키지가 필요하다.**
+
+```
+ERROR: Could not find a version that satisfies the requirement wheel
+       (from versions: none)
+ERROR: No matching distribution found for wheel
+```
+
+`setuptools` 만 고치고 넘어가면 **에어갭 설치가 여기서 멈춘다.**
+`--no-index` 예행연습을 하지 않으면 내부망에 들어가서야 발견한다.
+
+**재발 방지** — lock에 `setuptools` 와 `wheel` 이 **둘 다** 있는지 확인하고,
+반입 전 반드시 `--no-index` 로 설치 예행연습을 한다 (`deploy_l40.md` §1-2).
+
+```bash
+grep -iE "^setuptools|^wheel" requirements-*.lock
+```
 
 ---
 

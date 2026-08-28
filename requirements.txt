@@ -14,8 +14,13 @@ langchain-openai==0.2.14
 langchain-text-splitters==0.3.4
 
 # ── 벡터DB (Milvus Lite) ──
+# milvus-lite 3.x는 순수 파이썬 재작성판이라 Windows에서도 동작한다 —
+# 개발·운영이 같은 엔진을 쓰게 되어 서버/Lite 동작 차이가 사라진다.
+# 전환 실측(품질 동일, 검색 2.3배)은 docs/milvus_lite_3x.md 참조
 pymilvus==2.5.4
-milvus-lite==2.4.11
+milvus-lite==3.2.1
+# 3.x가 벡터 인덱스에 쓴다 (2.4.11에는 없던 의존성)
+faiss-cpu==1.15.0
 
 # ── 임베딩 / 리랭커 ──
 FlagEmbedding==1.3.3

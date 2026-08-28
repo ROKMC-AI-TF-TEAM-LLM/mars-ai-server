@@ -14,8 +14,11 @@ langchain-openai==0.2.14
 langchain-text-splitters==0.3.4
 
 # ── 벡터DB (Milvus Lite — 운영은 파일 기반) ──
+# 3.x는 저장 포맷이 다르다 (파일 → 디렉터리). 2.4.11로 만든 DB는 읽지 못하므로
+# 버전을 올릴 때는 전체 재적재가 필요하다 — docs/milvus_lite_3x.md §2-1
 pymilvus==2.5.4
-milvus-lite==2.4.11
+milvus-lite==3.2.1
+faiss-cpu==1.15.0
 
 # ── 임베딩 / 리랭커 ──
 torch==2.8.0

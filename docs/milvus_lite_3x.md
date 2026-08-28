@@ -1,10 +1,14 @@
 # milvus_lite_3x.md — milvus-lite 3.x 전환 검토
 
-**결론: 기술적으로 가능하다. 다만 내부망 반입은 현행 2.4.11 + Docker로 진행하고,
-반입 이후 개선 과제로 둔다.**
+**결론: 전환했다.** 검색 품질은 실측상 동일하고, Windows 개발이 운영과 같은
+엔진(Milvus Lite)을 쓰게 되어 서버/Lite 동작 차이에서 오는 버그가 사라진다.
+Docker Desktop + Milvus 이미지 ~2.9GB 반입도 필요 없어진다.
 
-검토 시점 2026-08-27, 측정 환경 WSL2 AlmaLinux 9 / RTX 4050 6GB.
-현행 `milvus-lite==2.4.11` + `pymilvus==2.5.4` 대비 `milvus-lite==3.2.1` 실측.
+검토·전환 시점 2026-08-27~28, 측정 환경 WSL2 AlmaLinux 9 / RTX 4050 6GB.
+`milvus-lite==2.4.11` → **`3.2.1`**, `pymilvus==2.5.4` 유지.
+
+> ⚠️ **기존 DB는 읽히지 않는다** (저장 포맷 비호환, §2-1).
+> 버전을 올린 뒤에는 **전체 재적재**가 필요하다.
 
 ---
 
@@ -76,20 +80,34 @@ MilvusException: (code=101, message=Collection 'company_docs' is in state
 > **3.x 전용이 아니라 원래 맞는 코드다** — Milvus 서버도 재시작 후 released가
 > 되므로 현행 Docker 환경에서도 필요하다.
 
-### 2-3. 의존성이 늘어난다
+### 2-3. 의존성이 늘어난다 — `faiss-cpu` 하나
 
-`milvus-lite` 휠 자체는 270KB지만 **`faiss-cpu`와 `pyarrow`를 끌고 온다.**
+`milvus-lite` 3.x는 `faiss-cpu`·`pyarrow`·`numpy`·`grpcio`를 요구한다.
+이 중 **실제로 새로 반입해야 하는 건 `faiss-cpu` 하나뿐이다.**
 
-| 패키지 | 크기 |
-|---|---:|
-| `pyarrow` | 157 MB |
-| `faiss-cpu` | 67 MB |
-| `milvus_lite` | 4 MB |
-| **추가 반입량** | **~224 MB** |
+| 패키지 | 크기 | 신규 여부 |
+|---|---:|---|
+| `faiss-cpu` | 67 MB | **★ 신규** |
+| `pyarrow` | 157 MB | 이미 있음 — `datasets`가 끌고 온다 (lock에 `25.0.0`) |
+| `numpy` | 74 MB | 이미 있음 |
+| `grpcio` | 16 MB | 이미 있음 (`pymilvus`) |
+| `milvus_lite` | 4 MB | 교체 |
 
-`numpy`·`grpcio`는 이미 프로젝트에 있어 추가되지 않는다.
+Windows 휠도 존재한다: `faiss_cpu-1.15.0-cp311-cp311-win_amd64.whl`.
 
-### 2-4. search 결과의 PK 위치가 바뀐다
+### 2-4. 경로는 여전히 `.db`로 끝나야 한다
+
+3.x는 그 경로에 **디렉터리**를 만들지만, `pymilvus`가 URI 형식을 먼저 검증한다.
+
+```
+ConnectionConfigException: uri: .../probe_db is illegal,
+needs start with [unix, http, https, tcp] or a local file endswith [.db]
+```
+
+`MILVUS_LITE_PATH=./data/milvus_ax.db` 처럼 **확장자를 유지한다.**
+이름은 파일 같지만 실제로는 디렉터리다 — 백업·삭제 시 `rm -rf`가 필요하다.
+
+### 2-5. search 결과의 PK 위치가 바뀐다
 
 | 환경 | PK 위치 |
 |---|---|
@@ -100,7 +118,7 @@ MilvusException: (code=101, message=Collection 'company_docs' is in state
 **코드 수정은 필요 없다.** `_primary_key()`가 이미 양쪽을 모두 읽는다
 (`docs/troubleshooting.md` ⑪). 한쪽만 읽지 않기로 한 판단이 결과적으로 맞았다.
 
-### 2-5. `pymilvus 2.5.4`와 일부 호출이 맞지 않는다 (앱 경로 아님)
+### 2-6. `pymilvus 2.5.4`와 일부 호출이 맞지 않는다 (앱 경로 아님)
 
 `list_collections()`는 gRPC 스키마가 달라 실패한다.
 
@@ -187,7 +205,7 @@ insert, flush, delete, drop_collection, query, query_iterator, search
 
 | | 현행 (2.4.11 + Docker) | 3.x |
 |---|---:|---:|
-| **Windows 반입량** | ~2.9 GB | **~224 MB** |
+| **Windows 반입량** | ~2.9 GB | **+67 MB** (faiss-cpu) |
 | Docker Desktop | 필요 | **불필요** |
 | Milvus 이미지 | 필요 | **불필요** |
 | Windows 개발 엔진 | Milvus **서버** | **Lite** (운영과 동일) |
@@ -201,30 +219,41 @@ insert, flush, delete, drop_collection, query, query_iterator, search
 
 ---
 
-## 5. 판단
+## 5. 전환 내역
 
-### 지금 하지 않는 이유
+| 파일 | 변경 |
+|---|---|
+| `requirements.txt` | `milvus-lite` 2.4.11 → **3.2.1**, `faiss-cpu==1.15.0` 추가 |
+| `requirements-linux-app.txt` | 〃 |
+| `requirements-dev-windows.txt` | **`milvus-lite`·`faiss-cpu` 추가** (제외 사유 소멸) |
+| `requirements-dev-windows.lock` | 〃 |
+| `scripts/dev_setup.ps1` | **Docker 단계 제거** (5단계 → 4단계), Docker 사전 검사 제거 |
+| `.env.dev.example` | `MILVUS_LITE_PATH`를 파일 경로로 |
+| `vectorstore.py` / `parent_store.py` | `ensure_loaded()` (커밋 `176865d`) |
 
-3.x가 안 돼서가 아니다. **`requirements.txt`·`.lock`·문서·테스트가 전부 2.4.11
-기준으로 검증돼 있어, 배포 직전에 바꾸면 재검증 범위가 넓어진다.**
-현행 구성은 실측으로 검증이 끝났다.
+`pymilvus`는 **2.5.4를 유지한다.** 앱이 쓰는 호출은 전부 정상 동작하며(§2-6),
+함께 올리면 검증 범위가 불필요하게 넓어진다.
 
-`CLAUDE.md`도 버전 핀 완화를 사전 확인 대상으로 정하고 있다.
+### 기존 환경에서 올릴 때
 
-### 반입 이후 착수할 때의 순서
+**기존 DB를 지우고 재적재해야 한다.** 이름은 `.db`지만 3.x에서는 디렉터리다.
 
-1. `pymilvus` 호환 버전 확인 (2.5.4로도 앱 경로는 동작하나, 함께 올리는 편이 안전)
-2. `requirements*.txt` / `.lock` 갱신 — `faiss-cpu`, `pyarrow` 추가
-3. 전체 재적재 → `scripts/eval_retrieval.py`로 `hit@n` 재확인
-4. **운영 규모 코퍼스에서 검색 속도 재측정** (이번 측정의 최대 공백)
-5. `requirements-dev-windows.txt`에 `milvus-lite` 추가, `pymilvus`만 남긴 주석 제거
-6. `serving/milvus-dev/`, `dev_setup.ps1` [5/5], `deploy_l40.md` §8-4 정리
-7. `.env.dev.example`의 `MILVUS_LITE_PATH`를 파일 경로로 변경
+```bash
+rm -rf data/milvus_ax.db data/bm25_index     # ★ -rf (디렉터리다)
+PYTHONPATH=src python scripts/bulk_ingest.py --dir <도메인별 디렉터리> --domain <도메인> ...
+PYTHONPATH=src python scripts/eval_retrieval.py    # hit@n 확인
+```
 
-### 우선순위를 올려야 하는 경우
+`--domain`은 **문서 성격에 맞게 디렉터리를 나눠** 지정한다
+(`docs/troubleshooting.md` ⑭).
 
-내부망에서 **Docker Desktop 설치·유지 부담이 크다면** 먼저 검토할 가치가 있다.
-전환 비용은 코드 두 줄과 재적재이고, 검색 품질은 실측상 동일하다.
+### 남은 공백
+
+- **운영 규모 코퍼스에서의 검색 속도** — 이번 측정은 1,519청크 기준이다.
+  파이썬 구현이라 규모가 커질수록 C++ 대비 불리해질 수 있다.
+  L40 배포 후 실제 코퍼스로 재측정한다.
+- `serving/milvus-dev/`(Docker compose·etcd 설정)는 **당장 지우지 않았다.**
+  3.x 운영이 안정된 뒤 정리한다 — 되돌릴 필요가 생길 수 있다.
 
 ---
 
