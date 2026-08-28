@@ -5,7 +5,7 @@
 Docker Desktop + Milvus 이미지 ~2.9GB 반입도 필요 없어진다.
 
 검토·전환 시점 2026-08-27~28, 측정 환경 WSL2 AlmaLinux 9 / RTX 4050 6GB.
-`milvus-lite==2.4.11` → **`3.2.1`**, `pymilvus==2.5.4` 유지.
+`milvus-lite==2.4.11` → **`3.2.1`**, `pymilvus==2.5.4` → **`3.0.1`**.
 
 > ⚠️ **기존 DB는 읽히지 않는다** (저장 포맷 비호환, §2-1).
 > 버전을 올린 뒤에는 **전체 재적재**가 필요하다.
@@ -151,7 +151,30 @@ WARNING [__setup_ts_by_request]: failed to get mvccTs from milvus server,
 **코드 수정은 필요 없다.** `_primary_key()`가 이미 양쪽을 모두 읽는다
 (`docs/troubleshooting.md` ⑪). 한쪽만 읽지 않기로 한 판단이 결과적으로 맞았다.
 
-### 2-7. `pymilvus 2.5.4`와 일부 호출이 맞지 않는다 (앱 경로 아님)
+### 2-7. `pymilvus`도 3.x로 올렸다 (2.5.4에서는 일부 호출이 안 맞았다)
+
+처음에는 `pymilvus==2.5.4`를 유지했으나, 3.0.1로 올리는 편이 낫다고 판단했다.
+앱이 쓰는 호출 12개를 격리 환경에서 전수 검증했고 **실패 0건**이다.
+
+| | 2.5.4 | **3.0.1** |
+|---|---|---|
+| `setuptools` 의존 | **`>69` 필수** (`pkg_resources`) | **없음** |
+| `grpcio` | `<=1.67.1` 상한 | 상한 없음 |
+| `AllocTimestamp` ERROR 소음 | 발생 | **없음** |
+| `mvccTs` 경고 | 발생 | **없음** |
+| 신규 의존성 | — | `cachetools`, `orjson` |
+| `ujson` | 필요 | 불필요 |
+
+**`setuptools` 핀의 원래 사유가 사라졌다.** ③번(lock에 setuptools 누락)의 근본
+원인이 `pymilvus`의 `pkg_resources` 요구였는데, 3.x는 쓰지 않는다.
+다만 **`pytest`와 sdist 빌드가 여전히 필요로 해** 핀 자체는 유지한다 —
+사유가 바뀌었을 뿐이다.
+
+§2-5의 로그 소음도 3.0.1에서는 나오지 않는다. `MilvusLiteNoiseFilter`는
+**그대로 둔다** — 되돌릴 경우와 다른 pymilvus 버전을 쓰는 환경에 대한 보험이고,
+소음이 없으면 아무 일도 하지 않는다.
+
+### 2-8. (2.5.4 시절 기록) `list_collections`가 맞지 않았다 — 앱 경로 아님
 
 `list_collections()`는 gRPC 스키마가 달라 실패한다.
 
@@ -256,17 +279,17 @@ insert, flush, delete, drop_collection, query, query_iterator, search
 
 | 파일 | 변경 |
 |---|---|
-| `requirements.txt` | `milvus-lite` 2.4.11 → **3.2.1**, `faiss-cpu==1.15.0` 추가 |
+| `requirements.txt` | `milvus-lite` 2.4.11 → **3.2.1**, `pymilvus` 2.5.4 → **3.0.1**, `faiss-cpu==1.15.0` 추가 |
 | `requirements-linux-app.txt` | 〃 |
 | `requirements-dev-windows.txt` | **`milvus-lite`·`faiss-cpu` 추가** (제외 사유 소멸) |
-| `requirements-dev-windows.lock` | 〃 |
+| `requirements-dev-windows.lock` | 〃 + `wheel`·`cachetools`·`orjson` |
 | `scripts/dev_setup.ps1` | **Docker 단계 제거** (5단계 → 4단계), Docker 사전 검사 제거 |
 | `.env.dev.example` | `MILVUS_LITE_PATH`를 파일 경로로 |
 | `vectorstore.py` / `parent_store.py` | `ensure_loaded()` (커밋 `176865d`) |
 | `logging_setup.py` | `MilvusLiteNoiseFilter` — gRPC 미구현 소음 제거 |
 
-`pymilvus`는 **2.5.4를 유지한다.** 앱이 쓰는 호출은 전부 정상 동작하며(§2-6),
-함께 올리면 검증 범위가 불필요하게 넓어진다.
+`pymilvus`도 **3.0.1로 올렸다** (§2-7). 앱 호출 12개 전수 검증 실패 0건이고,
+`setuptools`·`grpcio` 제약과 로그 소음이 함께 해소된다.
 
 ### 기존 환경에서 올릴 때
 
@@ -296,7 +319,7 @@ PYTHONPATH=src python scripts/eval_retrieval.py    # hit@n 확인
 ```bash
 # 격리 venv (현재 환경을 건드리지 않는다)
 python3.11 -m venv /tmp/venv-lite3
-/tmp/venv-lite3/bin/pip install "setuptools==75.6.0" "pymilvus==2.5.4" "milvus-lite==3.2.1"
+/tmp/venv-lite3/bin/pip install "pymilvus==3.0.1" "milvus-lite==3.2.1" "faiss-cpu==1.15.0"
 
 # 기존 DB는 열리지 않는다 (포맷 비호환 확인)
 /tmp/venv-lite3/bin/python -c "

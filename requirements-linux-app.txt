@@ -3,8 +3,9 @@
 # venv-llm과 분리한다 (사유는 requirements-linux-llm.txt 참조).
 # transformers는 여기서 고정하지 않는다 — FlagEmbedding이 4.44.2를 끌고 온다.
 #
-# ⚠️ setuptools를 맨 앞에 둔다: pymilvus 2.5.4가 pkg_resources를 요구하는데
-# setuptools 81+에서 제거됐다. 빠뜨리면 내부망에서 최신 버전이 깔려 터진다
+# ⚠️ setuptools를 맨 앞에 둔다: sdist 빌드(FlagEmbedding)와 pytest가 필요로 한다.
+# 81+는 pkg_resources를 제거했으므로 상한을 유지한다.
+# 빠뜨리면 내부망에서 최신 버전이 깔려 터진다 (docs/troubleshooting.md ③)
 setuptools==75.6.0
 
 # ── LangGraph / LangChain 스택 ──
@@ -16,7 +17,7 @@ langchain-text-splitters==0.3.4
 # ── 벡터DB (Milvus Lite — 운영은 파일 기반) ──
 # 3.x는 저장 포맷이 다르다 (파일 → 디렉터리). 2.4.11로 만든 DB는 읽지 못하므로
 # 버전을 올릴 때는 전체 재적재가 필요하다 — docs/milvus_lite_3x.md §2-1
-pymilvus==2.5.4
+pymilvus==3.0.1
 milvus-lite==3.2.1
 faiss-cpu==1.15.0
 

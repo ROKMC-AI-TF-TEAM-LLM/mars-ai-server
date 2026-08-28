@@ -182,6 +182,40 @@ START → agent ⇄ act              (상한: MAX_AGENT_STEPS=3 / MAX_SEARCH_CAL
 
 dense와 bm25는 독립적이라 병렬 가능하지만, 구현 단순성을 위해 순차부터 시작한다.
 
+### 4-2. 검색 범위 좁히기 — 지금은 스칼라 필터, 파티션 키는 보류
+
+ACL·프로젝트 범위를 **Milvus 스칼라 필터**로 좁힌다 (`acl.build_acl_filter_expr`).
+"전체를 훑은 뒤 후처리로 거르는" 방식이 아니다 — 필터가 Milvus 안에서 적용된다.
+후처리(`filter_by_acl`)는 **bm25 축에만** 필요하다. bm25s에 필터 기능이 없어서다.
+
+더 좁히는 수단으로 **파티션 키**(`is_partition_key=True`)를 검토했다.
+`project_id`에 걸면 Milvus가 값에 따라 물리 파티션으로 라우팅해 **탐색 범위
+자체가 줄어든다.** 멀티테넌시 표준 패턴이다.
+
+**milvus-lite 3.2.1 실측 (2026-08-28)**
+
+| 기능 | 지원 | 비고 |
+|---|---|---|
+| `is_partition_key=True` | ✅ | 프로젝트 격리 정확 |
+| `create_partition` / `load_partitions` | ❌ | `MilvusLite does not support LoadPartitions` |
+| `load_fields` (부분 로드) | ✅ | **행이 아니라 열 선택** — ACL에는 못 쓴다 |
+
+> `load_fields`는 접근 통제 수단이 아니다. 로드하지 않은 열은 **filter·output에
+> 쓸 수 없는데**, ACL 판정에 `visibility`·`owning_department`·`project_id`·`domain`이,
+> 출력에 `text`·`parent_id`·`source_doc`이 모두 필요하다. 뺄 열이 없다.
+
+**도입하지 않는 이유 (현재 규모)**
+
+- 검색이 이미 **3.5ms**다. 병목은 LLM 생성(수 초)과 리랭킹(수백 ms)이다
+- 스키마 변경이라 **전체 재적재**가 필요하고, `num_partitions`는 나중에 못 바꾼다
+- **bm25에는 파티션이 없다.** `filter_by_acl` 후처리는 그대로 남고,
+  두 축의 판정이 계속 일치해야 한다 (CLAUDE.md 보안 규칙) — 여기가 가장 조심스럽다
+
+**도입을 검토할 시점** — 프로젝트 수가 많아지고 프로젝트당 문서가 쌓여, 전사
+문서까지 매번 훑는 비용이 실측으로 보일 때. 키는 **`project_id`** 다
+(`owning_department`가 아니다 — 파티션 키는 하나만 지정할 수 있고, 전사 문서
+검색은 여러 부서를 걸치므로 부서는 부적합하다).
+
 ## 5. indexer_graph 흐름 (2노드)
 
 1. **chunk** — text (+선택적 sections) → chunks

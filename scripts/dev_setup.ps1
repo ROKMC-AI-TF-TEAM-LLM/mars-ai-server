@@ -45,14 +45,15 @@ Write-Host "사전 검사 통과 (python=$pyVersion, 디스크 여유 ${freeGB}G
 Write-Host "== [1/4] 파이썬 가상환경 + 의존성 ==" -ForegroundColor Cyan
 if (-not (Test-Path ".venv")) { python -m venv .venv }
 $py = ".\.venv\Scripts\python.exe"
-# setuptools<81 고정: pymilvus 2.5.4가 pkg_resources 필요 (81+에서 제거됨)
+# setuptools<81 고정: pytest와 sdist 빌드(FlagEmbedding)가 pkg_resources를 쓰는데
+# 81+에서 제거됐다 (pymilvus는 3.x부터 쓰지 않아 더 이상 이유가 아니다)
 & $py -m pip install --quiet "setuptools==75.6.0"
 if ($LASTEXITCODE -ne 0) { Write-Host "pip 설치 실패: setuptools (네트워크/프록시 확인)" -ForegroundColor Red; exit 1 }
 & $py -m pip install --quiet `
     pytest==8.3.4 ruff==0.8.6 python-dotenv==1.0.1 `
     fastapi==0.115.6 pydantic==2.10.4 requests==2.32.3 "uvicorn[standard]==0.34.0" `
     langgraph==0.2.62 langchain-core==0.3.29 langchain-openai==0.2.14 langchain-text-splitters==0.3.4 `
-    pymilvus==2.5.4 milvus-lite==3.2.1 faiss-cpu==1.15.0 `
+    pymilvus==3.0.1 milvus-lite==3.2.1 faiss-cpu==1.15.0 `
     kiwipiepy==0.22.2 bm25s==0.2.5 pdfplumber==0.11.10
 if ($LASTEXITCODE -ne 0) { Write-Host "pip 설치 실패: 앱 의존성 (네트워크/프록시 확인)" -ForegroundColor Red; exit 1 }
 # FlagEmbedding은 transformers 상한이 낮아 별도 설치 (vllm과 같은 venv 불가 — 노트북엔 vllm 없음)

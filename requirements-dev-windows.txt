@@ -28,7 +28,7 @@ langchain-openai==0.2.14
 langchain-text-splitters==0.3.4
 
 # ── 벡터DB (운영과 동일한 Milvus Lite. Docker 불필요) ──
-pymilvus==2.5.4
+pymilvus==3.0.1
 milvus-lite==3.2.1
 faiss-cpu==1.15.0
 
@@ -44,7 +44,8 @@ python-dotenv==1.0.1
 requests==2.32.3
 
 # ── 임베딩 / 리랭커 (transformers 상한이 낮아 마지막에 설치) ──
-# pymilvus 2.5.4가 pkg_resources를 요구해 setuptools<81을 함께 고정한다
+# setuptools 고정 사유: pytest가 pkg_resources를 쓰는데 81+에서 제거됐다.
+# (pymilvus는 3.x부터 pkg_resources를 쓰지 않아 더 이상 이유가 아니다)
 setuptools==75.6.0
 # FlagEmbedding은 wheel이 없어 sdist로 설치된다 — 빌드에 wheel 패키지가 필요하다.
 # pip freeze가 setuptools·pip·wheel을 기본 제외하므로 명시하지 않으면
