@@ -241,7 +241,7 @@ PYTHONPATH=src setsid venv-app/bin/python -m uvicorn main:app \
 
 > ★ **`--domain`은 디렉터리마다 따로 준다.** 전체를 한 번에 한 도메인으로 적재하면
 > 훈령이 `HR`로 들어가는 식이 되어 도메인 한정 검색에서 배제된다
-> (실측: `hit@fuse` 100% → 88.5%, `docs/troubleshooting.md` ⑬).
+> (실측: `hit@fuse` 100% → 88.5%, `docs/troubleshooting.md` ⑭).
 
 ### 4-2. 기동 확인
 

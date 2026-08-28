@@ -1,0 +1,246 @@
+# milvus_lite_3x.md — milvus-lite 3.x 전환 검토
+
+**결론: 기술적으로 가능하다. 다만 내부망 반입은 현행 2.4.11 + Docker로 진행하고,
+반입 이후 개선 과제로 둔다.**
+
+검토 시점 2026-08-27, 측정 환경 WSL2 AlmaLinux 9 / RTX 4050 6GB.
+현행 `milvus-lite==2.4.11` + `pymilvus==2.5.4` 대비 `milvus-lite==3.2.1` 실측.
+
+---
+
+## 1. 왜 검토했나
+
+Windows에는 `milvus-lite` 휠이 없어 개발 환경이 **Docker Milvus 서버**를 쓴다.
+그 결과 개발과 운영이 다른 엔진을 돌게 되고, **운영에서만 터지는 버그**가 생겼다
+(`docs/troubleshooting.md` ⑩⑪).
+
+내부망 반입 시 Docker Desktop(~500MB) + Milvus 이미지(~2.4GB)를 함께 들고
+들어가야 하는 부담도 있다. 반입 절차가 복잡할수록 이 2.9GB는 실질적인 비용이다.
+
+`milvus-lite` **3.x가 네이티브 C++에서 순수 파이썬으로 재작성되면서
+Windows 제약이 사라졌다.** 그래서 검토했다.
+
+| | 2.4.11 (현행) | 3.2.1 |
+|---|---|---|
+| 구현 | 네이티브 C++ (`milvus` ELF, `libknowhere.so`) | **순수 파이썬** |
+| 휠 태그 | `manylinux` / `macosx` | **`py3-none-any`** |
+| Windows | ❌ 불가 | ✅ **가능** |
+
+---
+
+## 2. 버전을 교체하면 바뀌는 것
+
+### 2-1. 저장 포맷이 호환되지 않는다 (전체 재적재 필요)
+
+2.4.11은 **단일 파일**, 3.x는 **디렉터리**(세그먼트·WAL·매니페스트 구조)다.
+기존 DB를 그대로 열면 즉시 실패한다.
+
+```python
+os.makedirs(data_dir, exist_ok=True)
+FileExistsError: [Errno 17] File exists: '/root/mars/data/milvus_ax.db'
+```
+
+**재적재가 필수다.** 다만 문서 원본과 임베딩 서버만 있으면 되고 자동으로 진행된다
+(15문서 1,519청크 기준 **104초**). 운영 코퍼스가 커지면 그만큼 늘어난다.
+
+### 2-2. 컬렉션 load를 명시적으로 호출해야 한다 ★
+
+Milvus는 컬렉션이 `released` 상태면 search/query를 거부한다.
+
+```
+MilvusException: (code=101, message=Collection 'company_docs' is in state
+'released'; call load() before search/get/query)
+```
+
+**2.4.11은 자동 로드해 줘서 코드가 `load_collection()`을 한 번도 부르지 않았다.**
+3.x는 진짜 Milvus 시맨틱을 따라 명시적 로드를 요구한다.
+
+실측에서 **적재 4배치 중 3개가 이걸로 실패**했다. 도메인별로 `bulk_ingest.py`를
+따로 실행해 프로세스가 4개였는데:
+
+| 배치 | 결과 | 이유 |
+|---|---|---|
+| ① FINANCE_LEGAL | 성공 | `create_collection`이 실제로 생성 → **생성 직후는 loaded** |
+| ② DIRECTIVE | 실패 | 컬렉션이 이미 있어 조기 반환 → **released 상태 그대로** |
+| ③ GENERAL | 실패 | 〃 |
+| ④ HR | 실패 | 〃 |
+
+터진 지점은 `embed_and_upsert` → `rebuild_bm25()` → `fetch_all_children()` →
+`query_iterator()`다. **BM25는 부분 갱신이 안 돼 매번 전체 청크를 조회**하는데,
+그 조회가 released 컬렉션에 날아갔다.
+
+**자식·부모 두 컬렉션 모두** 해당한다 — 자식만 고쳤을 때 `document_parents`에서
+같은 오류가 났다.
+
+> **이 수정은 이미 반영했다** (커밋 `176865d`, `ensure_loaded()`).
+> **3.x 전용이 아니라 원래 맞는 코드다** — Milvus 서버도 재시작 후 released가
+> 되므로 현행 Docker 환경에서도 필요하다.
+
+### 2-3. 의존성이 늘어난다
+
+`milvus-lite` 휠 자체는 270KB지만 **`faiss-cpu`와 `pyarrow`를 끌고 온다.**
+
+| 패키지 | 크기 |
+|---|---:|
+| `pyarrow` | 157 MB |
+| `faiss-cpu` | 67 MB |
+| `milvus_lite` | 4 MB |
+| **추가 반입량** | **~224 MB** |
+
+`numpy`·`grpcio`는 이미 프로젝트에 있어 추가되지 않는다.
+
+### 2-4. search 결과의 PK 위치가 바뀐다
+
+| 환경 | PK 위치 |
+|---|---|
+| Milvus 서버 (개발 Docker) | `hit["chunk_id"]` |
+| Milvus Lite **2.4.11** | `hit["id"]` |
+| Milvus Lite **3.2.1** | **`hit["chunk_id"]`** (서버와 같아짐) |
+
+**코드 수정은 필요 없다.** `_primary_key()`가 이미 양쪽을 모두 읽는다
+(`docs/troubleshooting.md` ⑪). 한쪽만 읽지 않기로 한 판단이 결과적으로 맞았다.
+
+### 2-5. `pymilvus 2.5.4`와 일부 호출이 맞지 않는다 (앱 경로 아님)
+
+`list_collections()`는 gRPC 스키마가 달라 실패한다.
+
+```
+MilvusException: Protocol message ShowCollectionsResponse has no "shards_num" field.
+```
+
+**앱은 이 함수를 쓰지 않는다.** 앱이 실제로 쓰는 호출은 전부 정상 동작한다:
+
+```
+create_collection, create_schema, prepare_index_params, has_collection,
+insert, flush, delete, drop_collection, query, query_iterator, search
+```
+
+> ⚠️ **최초 검토에서 이걸 "앱이 못 돈다"는 근거로 잘못 판단했다.**
+> 진단 스크립트가 호출한 함수였을 뿐인데 앱의 문제로 보고했다.
+> 같은 착각을 반복하지 않도록 기록해 둔다 — **오류를 발견하면 그 함수를
+> 앱이 실제로 호출하는지 먼저 확인한다.**
+
+---
+
+## 3. 테스트 결과
+
+같은 코퍼스(15문서 / 1,519청크), 같은 질의, 같은 임계값(`RERANK_SCORE_THRESHOLD=0.1`)
+으로 두 버전을 각각 측정했다.
+
+### 3-1. 검색 품질 — 동일
+
+| 지표 | 2.4.11 | **3.2.1** | 판정 |
+|---|---:|---:|---|
+| `hit@n` | 0.923 | **0.923** | **동일** |
+| `hit@fuse` | 1.0 | **1.0** | **동일** |
+| `empty_rate` | 0.077 | **0.077** | **동일** |
+
+### 3-2. 적재 — 정상
+
+| | 2.4.11 | 3.2.1 |
+|---|---:|---:|
+| 문서 | 15건 | **15건** |
+| 자식 청크 | 1,519행 | **1,519행** |
+| 적재 배치 | 4/4 | **4/4** (load 수정 후) |
+| 소요 | — | 104초 |
+
+도메인별 분포도 일치한다 (FINANCE_LEGAL 398 / DIRECTIVE 430 / GENERAL 686 / HR 5).
+
+### 3-3. 검색 속도 — 2.3배 느림
+
+`SEARCH_TOP_K=20`, ACL 필터 적용, 워밍업 후 30회.
+
+| 지표 | 2.4.11 | **3.2.1** | 배수 |
+|---|---:|---:|---:|
+| 중앙값 | 1.5 ms | **3.5 ms** | 2.3× |
+| 평균 | 1.6 ms | 3.7 ms | 2.3× |
+| p95 | 1.8 ms | 4.7 ms | 2.6× |
+| 최대 | 2.2 ms | 5.8 ms | 2.6× |
+
+**절대 차이는 2ms다.** MARS 한 질의의 전체 지연에서 LLM 생성이 수 초,
+리랭킹이 수백 ms를 차지하므로 **체감 차이는 사실상 없다.**
+
+다만 이건 **1,519청크에서의 수치다.** 파이썬 구현은 코퍼스가 커질수록 C++ 대비
+불리해질 수 있다. `AUTOINDEX`가 규모에 따라 인덱스를 바꾸므로 선형 악화는
+아니겠지만, **운영 규모에서 재측정 없이 단정할 수 없다.**
+
+### 3-4. 유닛 테스트 — 통과
+
+두 버전 모두 전량 통과했다.
+
+### 3-5. 기능 확인 (Windows, 격리 venv)
+
+`win32`에서 직접 확인한 항목:
+
+| 항목 | 결과 |
+|---|---|
+| 임베디드 접속 | ✅ |
+| `AUTOINDEX` 컬렉션 생성 | ✅ (⑩이 사라진다) |
+| 한국어 본문 적재 | ✅ |
+| ACL 스칼라 필터 검색 | ✅ |
+| `query` 필터 | ✅ |
+| `query_iterator` | ✅ |
+
+---
+
+## 4. 얻는 것
+
+| | 현행 (2.4.11 + Docker) | 3.x |
+|---|---:|---:|
+| **Windows 반입량** | ~2.9 GB | **~224 MB** |
+| Docker Desktop | 필요 | **불필요** |
+| Milvus 이미지 | 필요 | **불필요** |
+| Windows 개발 엔진 | Milvus **서버** | **Lite** (운영과 동일) |
+
+**마지막 항목이 가장 크다.** 지금은 Windows 개발이 서버 모드라 운영(Lite)과 다르고,
+그 격차가 ⑩(HNSW 거부)·⑪(PK 키 차이)을 **운영에서만 드러나게** 만들었다.
+3.x로 가면 Windows에서 돌리는 것이 곧 운영과 같은 엔진이 되어 이 격차가
+구조적으로 사라진다.
+
+부수적으로, 내부망에 Docker Desktop을 설치·유지·갱신하는 운영 부담도 없어진다.
+
+---
+
+## 5. 판단
+
+### 지금 하지 않는 이유
+
+3.x가 안 돼서가 아니다. **`requirements.txt`·`.lock`·문서·테스트가 전부 2.4.11
+기준으로 검증돼 있어, 배포 직전에 바꾸면 재검증 범위가 넓어진다.**
+현행 구성은 실측으로 검증이 끝났다.
+
+`CLAUDE.md`도 버전 핀 완화를 사전 확인 대상으로 정하고 있다.
+
+### 반입 이후 착수할 때의 순서
+
+1. `pymilvus` 호환 버전 확인 (2.5.4로도 앱 경로는 동작하나, 함께 올리는 편이 안전)
+2. `requirements*.txt` / `.lock` 갱신 — `faiss-cpu`, `pyarrow` 추가
+3. 전체 재적재 → `scripts/eval_retrieval.py`로 `hit@n` 재확인
+4. **운영 규모 코퍼스에서 검색 속도 재측정** (이번 측정의 최대 공백)
+5. `requirements-dev-windows.txt`에 `milvus-lite` 추가, `pymilvus`만 남긴 주석 제거
+6. `serving/milvus-dev/`, `dev_setup.ps1` [5/5], `deploy_l40.md` §8-4 정리
+7. `.env.dev.example`의 `MILVUS_LITE_PATH`를 파일 경로로 변경
+
+### 우선순위를 올려야 하는 경우
+
+내부망에서 **Docker Desktop 설치·유지 부담이 크다면** 먼저 검토할 가치가 있다.
+전환 비용은 코드 두 줄과 재적재이고, 검색 품질은 실측상 동일하다.
+
+---
+
+## 재현 방법
+
+```bash
+# 격리 venv (현재 환경을 건드리지 않는다)
+python3.11 -m venv /tmp/venv-lite3
+/tmp/venv-lite3/bin/pip install "setuptools==75.6.0" "pymilvus==2.5.4" "milvus-lite==3.2.1"
+
+# 기존 DB는 열리지 않는다 (포맷 비호환 확인)
+/tmp/venv-lite3/bin/python -c "
+from pymilvus import MilvusClient
+MilvusClient('data/milvus_ax.db')"      # FileExistsError
+
+# 전환 후 검증
+PYTHONPATH=src venv-app/bin/python scripts/eval_retrieval.py
+PYTHONPATH=src venv-app/bin/python -m pytest tests/unit_tests -q
+```

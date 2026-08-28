@@ -294,11 +294,39 @@ return self._servers[str(path)].uds_path     # TCP 포트가 아니다
 **결론** — 앱이 Windows에 있으면 Docker Milvus로 돌아가야 하고,
 그건 ⑩⑪을 다시 보이지 않게 만든다. **전부 WSL에 두는 것이 맞다.**
 
+> 단, 이건 **`milvus-lite 2.4.11` 기준**이다. 3.x는 순수 파이썬으로 재작성돼
+> Windows에서도 동작한다 — 전환 검토와 실측은 `docs/milvus_lite_3x.md` 참조.
+
+## ⑬ 컬렉션이 released 상태면 조회가 거부된다
+
+**증상**
+
+```
+MilvusException: (code=101, message=Collection 'company_docs' is in state
+'released'; call load() before search/get/query)
+```
+
+**원인**
+
+Milvus는 컬렉션이 `released`면 search/query를 거부한다. 로드는 **컬렉션 생성
+직후에만 유지**되고, 새 프로세스가 기존 컬렉션을 열면 released다.
+
+Milvus Lite 2.4.11이 이걸 자동으로 해 줘서 코드가 `load_collection()`을 한 번도
+부르지 않았다. **Milvus 서버는 재시작하면 released가 되고**, milvus-lite 3.x도
+서버와 같은 시맨틱을 따른다.
+
+**해결** — `ensure_loaded()`로 조회 전 로드를 보장한다 (커밋 `176865d`).
+**자식·부모 두 컬렉션 모두** 필요하다 — 자식만 고치면 `document_parents`에서 같은
+오류가 난다.
+
+**터지는 지점** — `rebuild_bm25()` → `fetch_all_children()` → `query_iterator()`.
+BM25는 부분 갱신이 안 돼 매번 전체 청크를 조회하기 때문이다.
+
 ---
 
 # E. 데이터 적재
 
-## ⑬ 도메인을 일괄 지정하면 검색 정확도가 떨어진다
+## ⑭ 도메인을 일괄 지정하면 검색 정확도가 떨어진다
 
 **증상** — `hit@fuse` 가 100% 여야 하는데 **88.5%** 로 측정됨.
 
@@ -320,7 +348,7 @@ python scripts/bulk_ingest.py --dir sample_docs --domain HR
 결과가 동일했다. **인덱스가 아니라 적재 데이터 문제였다.**
 가설을 세울 때 데이터를 먼저 의심한다.
 
-## ⑭ 마이그레이션 백업이 `numpy.float32` 직렬화로 실패한다
+## ⑮ 마이그레이션 백업이 `numpy.float32` 직렬화로 실패한다
 
 **증상** — `TypeError: Object of type float32 is not JSON serializable`
 
