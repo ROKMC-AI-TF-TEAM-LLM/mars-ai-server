@@ -143,9 +143,38 @@ def create_collection(drop_existing: bool = False) -> str:
     return name
 
 
+def ensure_loaded(name: str) -> str:
+    """컬렉션이 로드돼 있음을 보장한다 (released 상태면 load). 이름을 그대로 반환.
+
+    Milvus는 released 상태의 컬렉션에 search/query를 거부한다
+    (`Collection X is in state 'released'; call load() before search/get/query`).
+    로드는 컬렉션 생성 직후에만 유지되고, **새 프로세스가 기존 컬렉션을 열면
+    released다.**
+
+    Milvus Lite 2.4.11은 이걸 자동으로 해 줘서 그동안 호출이 없어도 문제가
+    없었다. 하지만 Milvus 서버(개발 Docker)는 재시작 후 released가 되고,
+    milvus-lite 3.x도 서버와 같은 시맨틱을 따른다 — 어느 쪽이든 필요한 호출이다.
+
+    로드 상태 조회는 실패해도 무방하다(구버전은 API가 없을 수 있다). 그 경우
+    그냥 load를 시도하고, 이미 로드돼 있으면 무해하게 통과한다.
+    """
+    client = get_client()
+    try:
+        state = client.get_load_state(collection_name=name)
+        if str(state.get("state", state)).endswith("Loaded"):
+            return name
+    except Exception:  # noqa: BLE001 — 상태 조회 실패는 load 시도로 대체한다
+        pass
+    try:
+        client.load_collection(name)
+    except Exception as exc:  # noqa: BLE001 — load 불가 환경에서도 검색은 시도한다
+        logger.warning("컬렉션 load 실패 (%s): %s", name, exc)
+    return name
+
+
 def get_collection() -> str:
-    """존재가 보장된 company_docs 컬렉션 이름을 반환한다."""
-    return create_collection(drop_existing=False)
+    """존재가 보장되고 로드된 company_docs 컬렉션 이름을 반환한다."""
+    return ensure_loaded(create_collection(drop_existing=False))
 
 
 def insert_children(rows: list[dict]) -> int:

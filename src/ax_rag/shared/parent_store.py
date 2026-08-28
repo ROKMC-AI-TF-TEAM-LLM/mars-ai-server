@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pymilvus import DataType
 
-from ax_rag.shared.vectorstore import delete_by_filter, get_client
+from ax_rag.shared.vectorstore import delete_by_filter, ensure_loaded, get_client
 
 PARENT_COLLECTION = "document_parents"
 
@@ -24,7 +24,8 @@ def get_parent_collection(drop_existing: bool = False) -> str:
     if drop_existing and client.has_collection(PARENT_COLLECTION):
         client.drop_collection(PARENT_COLLECTION)
     if client.has_collection(PARENT_COLLECTION):
-        return PARENT_COLLECTION
+        # 기존 컬렉션은 released 상태로 열린다 — 부모 치환 조회 전에 로드해야 한다
+        return ensure_loaded(PARENT_COLLECTION)
 
     schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
     schema.add_field("parent_id", DataType.VARCHAR, is_primary=True, max_length=64)
