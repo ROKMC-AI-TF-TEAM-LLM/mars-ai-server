@@ -3,10 +3,16 @@
 # venv-llm과 분리한다 (사유는 requirements-linux-llm.txt 참조).
 # transformers는 여기서 고정하지 않는다 — FlagEmbedding이 4.44.2를 끌고 온다.
 #
-# ⚠️ setuptools를 맨 앞에 둔다: sdist 빌드(FlagEmbedding)와 pytest가 필요로 한다.
-# 81+는 pkg_resources를 제거했으므로 상한을 유지한다.
-# 빠뜨리면 내부망에서 최신 버전이 깔려 터진다 (docs/troubleshooting.md ③)
-setuptools==75.6.0
+# ⚠️ setuptools·wheel은 **목록에 반드시 있어야 한다.** pip freeze가 셋
+# (setuptools·pip·wheel)을 기본 제외하는데, FlagEmbedding은 wheel이 없어
+# sdist로 빌드되므로 둘 다 필요하다 (docs/troubleshooting.md ③).
+#
+# 버전 상한은 두지 않는다. 예전엔 pymilvus 2.5.4가 pkg_resources를 요구해
+# setuptools<81로 묶었으나, pymilvus 3.x는 쓰지 않는다.
+# setuptools 84.0.0(pkg_resources 제거본)에서 sdist 빌드와 테스트 386개
+# 전부 통과함을 실측했다.
+setuptools
+wheel
 
 # ── LangGraph / LangChain 스택 ──
 langgraph==0.2.62

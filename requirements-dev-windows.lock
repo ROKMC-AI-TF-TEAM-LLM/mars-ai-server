@@ -1,4 +1,4 @@
-﻿setuptools==75.6.0
+﻿setuptools==84.0.0
 # FlagEmbedding이 sdist라 빌드에 필요하다. pip freeze는 wheel도 기본 제외한다
 wheel==0.45.1
 accelerate==1.14.0

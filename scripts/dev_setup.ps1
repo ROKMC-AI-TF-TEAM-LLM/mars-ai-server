@@ -45,9 +45,9 @@ Write-Host "사전 검사 통과 (python=$pyVersion, 디스크 여유 ${freeGB}G
 Write-Host "== [1/4] 파이썬 가상환경 + 의존성 ==" -ForegroundColor Cyan
 if (-not (Test-Path ".venv")) { python -m venv .venv }
 $py = ".\.venv\Scripts\python.exe"
-# setuptools<81 고정: pytest와 sdist 빌드(FlagEmbedding)가 pkg_resources를 쓰는데
-# 81+에서 제거됐다 (pymilvus는 3.x부터 쓰지 않아 더 이상 이유가 아니다)
-& $py -m pip install --quiet "setuptools==75.6.0"
+# setuptools·wheel: FlagEmbedding이 sdist라 빌드에 필요하다. 버전 상한은 없다
+# (pymilvus 3.x가 pkg_resources를 안 쓰면서 <81 제약이 사라졌다)
+& $py -m pip install --quiet setuptools wheel
 if ($LASTEXITCODE -ne 0) { Write-Host "pip 설치 실패: setuptools (네트워크/프록시 확인)" -ForegroundColor Red; exit 1 }
 & $py -m pip install --quiet `
     pytest==8.3.4 ruff==0.8.6 python-dotenv==1.0.1 `

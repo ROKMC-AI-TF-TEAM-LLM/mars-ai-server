@@ -78,8 +78,14 @@ because these package versions have conflicting dependencies.
 `pip freeze` 는 **`setuptools`·`pip`·`wheel` 을 기본으로 제외한다.**
 (`pip list --format=freeze` 는 포함한다 — 둘의 동작이 다르다.)
 
-lock에 없으면 에어갭에서 pip이 기본 제공하는 **최신 setuptools(84.0.0)** 가 깔리고,
-그 버전은 `pkg_resources` 를 제거했다.
+lock에 없으면 에어갭에서 **아예 설치가 되지 않는다** — `pip` 은 자기 자신 외에
+`setuptools`·`wheel` 을 제공하지 않으므로, sdist 빌드에 필요한 두 패키지가
+반입 목록에서 통째로 빠진다.
+
+> **버전 상한은 필요 없다** (2026-08-28 정정). 예전엔 `pymilvus 2.5.4` 가
+> `pkg_resources` 를 요구해 `setuptools<81` 로 묶었으나, `pymilvus 3.x` 는 쓰지
+> 않는다. `setuptools 84.0.0`(`pkg_resources` 제거본)에서 sdist 빌드와 테스트
+> 386개 전부 통과함을 실측했다. **필요한 건 "상한"이 아니라 "목록에 있는 것"이다.**
 
 **해결** — lock 생성 시 `pip list --format=freeze` 를 쓰거나 setuptools를 명시적으로 추가.
 
