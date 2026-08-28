@@ -59,7 +59,12 @@ class Config:
     RERANK_TOP_K: int
     RERANK_TOP_N: int
     # 리랭크 점수 하한 (0~1). 미만 후보는 top_n 이내라도 근거에서 제외한다.
-    # bge-reranker 점수는 관련(0.6+)/무관(0.05 미만)으로 갈려 그 사이가 적절하다. 0이면 비활성
+    # bge-reranker 점수는 관련(0.6+)/무관(0.05 미만)으로 갈려 그 사이가 적절하다. 0이면 비활성.
+    #
+    # ★ 기본값 0.1은 실측 근거가 있다 (한국어 군 문서 26문항, docs/experiments.md).
+    #   0.1 → hit@n 92.3% / empty_rate 7.7%
+    #   0.5 → hit@n 73.1% / empty_rate 26.9%  ← 근거를 못 찾아 답을 못 하는 비율이 3.5배
+    #   올리기 전에 반드시 eval_retrieval.py로 재측정한다
     RERANK_SCORE_THRESHOLD: float
 
     # --- Milvus Lite (임베디드) ---
@@ -180,7 +185,7 @@ def get_config() -> Config:
         RERANKER_MODEL_PATH=_env_str("RERANKER_MODEL_PATH", "./models/bge-reranker-v2-m3"),
         RERANK_TOP_K=_env_int("RERANK_TOP_K", 20),
         RERANK_TOP_N=_env_int("RERANK_TOP_N", 5),
-        RERANK_SCORE_THRESHOLD=_env_float("RERANK_SCORE_THRESHOLD", 0.5),
+        RERANK_SCORE_THRESHOLD=_env_float("RERANK_SCORE_THRESHOLD", 0.1),
         MILVUS_LITE_PATH=_env_str("MILVUS_LITE_PATH", "./data/milvus_ax.db"),
         MILVUS_COLLECTION=_env_str("MILVUS_COLLECTION", "company_docs"),
         BM25_INDEX_PATH=_env_str("BM25_INDEX_PATH", "./data/bm25_index"),
