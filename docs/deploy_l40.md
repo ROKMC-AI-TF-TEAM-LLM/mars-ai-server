@@ -159,8 +159,12 @@ venv-app/bin/pip install --no-index --find-links wheels/ -r requirements-linux-a
 venv-llm/bin/pip check && venv-app/bin/pip check
 ```
 
-> `setuptools==75.6.0`은 `requirements-linux-app.txt` 맨 앞에 있어 따로 깔 필요가 없다.
-> 빠뜨리면 최신 setuptools가 깔려 `pymilvus`가 요구하는 `pkg_resources`가 없어 터진다.
+> `setuptools`·`wheel`은 `requirements-linux-app.txt` 맨 앞에 있어 따로 깔 필요가 없다.
+> **버전 상한은 없다** — 예전엔 `pymilvus 2.5.4`가 `pkg_resources`를 요구해
+> `setuptools<81`로 묶었으나 `pymilvus 3.x`는 쓰지 않는다.
+> 다만 **반입 목록에는 반드시 있어야 한다.** `pip`은 자기 자신 외에 이 둘을
+> 제공하지 않으므로, 빠지면 `FlagEmbedding` sdist 빌드가 아예 되지 않는다
+> (`docs/troubleshooting.md` ③).
 >
 > `triton`은 **3.4.0**이다. `requirements.txt`에 적힌 3.5.0은 `torch 2.8.0`이
 > `triton==3.4.0`을 정확히 못 박아 **설치 불가**다 (Windows에는 triton이 없어

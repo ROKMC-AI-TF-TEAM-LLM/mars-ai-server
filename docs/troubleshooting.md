@@ -69,9 +69,14 @@ because these package versions have conflicting dependencies.
 
 **재발 방지** — torch를 올릴 때 triton 핀을 함께 확인한다. 둘은 한 쌍이다.
 
-## ③ lock 파일에 `setuptools` 가 빠졌다
+## ③ lock 파일에 `setuptools`·`wheel` 이 빠졌다
 
-**증상** — 에어갭 설치 시 `pymilvus` 가 `pkg_resources` 를 못 찾을 위험.
+**증상** — 에어갭 설치가 sdist 빌드 단계에서 실패한다.
+
+```
+ERROR: Could not find a version that satisfies the requirement wheel
+       (from versions: none)
+```
 
 **원인**
 
@@ -87,19 +92,12 @@ lock에 없으면 에어갭에서 **아예 설치가 되지 않는다** — `pip
 > 않는다. `setuptools 84.0.0`(`pkg_resources` 제거본)에서 sdist 빌드와 테스트
 > 386개 전부 통과함을 실측했다. **필요한 건 "상한"이 아니라 "목록에 있는 것"이다.**
 
-**해결** — lock 생성 시 `pip list --format=freeze` 를 쓰거나 setuptools를 명시적으로 추가.
+**왜 sdist가 등장하나** — `FlagEmbedding` 은 wheel이 없어(1.4.0부터 제공)
+**sdist로 설치되고**, 그 빌드에 `setuptools` 와 `wheel` 이 모두 필요하다.
 
-**같은 이유로 `wheel` 도 빠진다** — `pip freeze` 가 제외하는 건 셋이다
-(`setuptools`·`pip`·`wheel`). `FlagEmbedding` 은 wheel이 없어 **sdist로 설치되는데,
-sdist 빌드에는 `wheel` 패키지가 필요하다.**
+**해결** — lock 생성 시 `pip list --format=freeze` 를 쓰거나 두 패키지를 명시한다.
 
-```
-ERROR: Could not find a version that satisfies the requirement wheel
-       (from versions: none)
-ERROR: No matching distribution found for wheel
-```
-
-`setuptools` 만 고치고 넘어가면 **에어갭 설치가 여기서 멈춘다.**
+`setuptools` 만 넣고 `wheel` 을 빠뜨리면 **거기서 다시 멈춘다** (실제로 겪었다).
 `--no-index` 예행연습을 하지 않으면 내부망에 들어가서야 발견한다.
 
 **재발 방지** — lock에 `setuptools` 와 `wheel` 이 **둘 다** 있는지 확인하고,
