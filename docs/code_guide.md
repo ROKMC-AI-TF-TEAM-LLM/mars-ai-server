@@ -754,7 +754,7 @@ env를 바꾸는 테스트는 픽스처에서 `get_config.cache_clear()` /
 | 구성요소 | 실행 |
 |---|---|
 | LLM (llama.cpp) | `powershell -File serving\start_llm_dev.ps1` |
-| Milvus (Docker) | `docker start ax-milvus-dev` |
+| Milvus Lite | 별도 기동 없음 (첫 접속 시 `MILVUS_LITE_PATH`에 생성) |
 | 임베딩/리랭커 | `$env:PYTHONPATH="src"; python serving\embedding_server.py` (각각) |
 | API | `python -m uvicorn main:app --port 9000` |
 | 문서 적재 | `python scripts\bulk_ingest.py --dir sample_docs --domain HR --department HR_TEAM --visibility ALL` |

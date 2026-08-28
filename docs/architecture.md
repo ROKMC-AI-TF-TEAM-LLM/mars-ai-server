@@ -48,7 +48,7 @@ mars-ai-server/
 │   └── hr_sample.jsonl         # 평가용 질문-정답 쌍
 ├── sample_docs/                # 개발용 한국어 샘플 문서 (훈령·법령 PDF 등)
 ├── scripts/
-│   ├── dev_setup.ps1           # 개발 노트북 부트스트랩 (venv·모델·llama.cpp·Milvus)
+│   ├── dev_setup.ps1           # 개발 노트북 부트스트랩 (venv·모델·llama.cpp)
 │   ├── bulk_ingest.py          # 여러 문서를 순회하며 indexer_graph 호출
 │   ├── reindex_document.py     # 문서 갱신: 기존 청크 삭제 후 재적재 + BM25 재빌드
 │   └── evaluate_rag.py         # RAGAS 기반 성능 평가
@@ -98,7 +98,6 @@ mars-ai-server/
 │   ├── start_llm_dev.ps1       # 개발 노트북 llama.cpp 서빙 (vLLM 대체)
 │   ├── embedding_server.py
 │   ├── reranker_server.py
-│   └── milvus-dev/             # 개발용 Docker Milvus 설정
 └── tests/
     ├── unit_tests/
     └── integration_tests/

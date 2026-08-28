@@ -335,7 +335,7 @@ BM25 전체 재빌드가 동반되므로 야간 배치를 권장.
 |---|---|---|
 | LLM | llama.cpp + GGUF Q4 (`tools/`) | **vLLM + 원본 fp16** (`serving/start_vllm.sh`) |
 | venv | 1개 (vllm 미설치) | **2개 분리** (venv-llm / venv-app) |
-| 벡터DB | Docker Milvus standalone :19530 | **Milvus Lite 파일** (`./data/milvus_ax.db`), Docker 불필요 |
+| 벡터DB | **Milvus Lite 파일** (동일) | **Milvus Lite 파일** (`./data/milvus_ax.db`) |
 | 디바이스 | 임베딩/리랭커 cpu | cuda |
 | .env | `.env.dev.example` | `.env.example` 기준 |
 | 네트워크 | 인터넷 (다운로드 가능) | 에어갭 (wheel/모델 반입) |
@@ -355,7 +355,6 @@ BM25 전체 재빌드가 동반되므로 야간 배치를 권장.
 `requirements.txt`를 쓰지 않는다. **`requirements-dev-windows.lock`** 을 쓴다:
 
 - `vllm` 계열 제외 — Windows 미지원 (llama.cpp로 서빙)
-- `milvus-lite` 제외 — Windows 미지원 (Docker Milvus standalone)
 - `transformers`는 **4.44.2** (FlagEmbedding이 결정). 운영의 4.57.1은 vllm 요구 버전
 - `torch`는 **CPU 빌드**(`2.8.0+cpu`) — 개발은 임베딩·리랭커를 CPU로 돌린다
 
@@ -390,98 +389,36 @@ wheels-linux/    Linux 전용 (manylinux)
 `--find-links`를 여러 번 주면 되므로 설치 명령은 한 줄만 늘어난다.
 목록은 `scripts/wheel_list*.csv` 참조.
 
-### 8-4. Milvus 반입·구동 (Windows) — Docker 이미지 1개
+### 8-4. 벡터DB — 반입할 것이 없다
 
-Windows에는 `milvus-lite` 휠이 없다. **Docker standalone**(etcd 내장)으로 띄운다.
-별도 etcd·MinIO 컨테이너가 필요 없어 **이미지 하나면 된다**.
-
-> 코드는 `MILVUS_LITE_PATH` 값의 형태로 두 모드를 자동 판별한다
-> ([vectorstore.py](../src/ax_rag/shared/vectorstore.py)의 `get_client`).
-> 값이 `http://...` 면 서버 모드, 파일 경로면 Lite 모드다.
-> Windows에서 파일 경로를 주면 **해법을 알려주는 오류**와 함께 즉시 멈춘다.
-
-#### ① 반입
+**Docker가 필요 없다.** `milvus-lite` 3.x는 순수 파이썬이라 Windows에서도
+임베디드로 뜬다. wheel 묶음에 이미 들어 있으므로 **별도 반입물이 없다**
+(`milvus-lite`, `faiss-cpu`).
 
 ```powershell
-# 인터넷 되는 곳에서 — 태그를 반드시 고정한다 (pymilvus 2.5.4와 짝)
-docker pull milvusdb/milvus:v2.5.4
-docker save milvusdb/milvus:v2.5.4 -o milvus-v2.5.4.tar    # 약 2.4GB
-
-# 내부망에서
-docker load -i milvus-v2.5.4.tar
-docker images milvusdb/milvus                              # 태그 확인
+MILVUS_LITE_PATH=./data/milvus_ax.db     # .env — 파일 경로
 ```
 
-**Docker Desktop 설치 파일(~500MB)도 함께 반입해야 한다.** 내부망 Windows에
-Docker가 없으면 Milvus를 띄울 방법이 없다.
+기동 로그에 `Milvus Lite(임베디드) 모드로 접속한다`가 찍히면 정상이다.
 
-#### ② 기동
+> 경로는 **`.db` 로 끝나야 한다.** 3.x는 그 자리에 디렉터리를 만들지만
+> `pymilvus`가 URI 형식을 먼저 검증한다. 이름은 파일 같아도 실제로는
+> 디렉터리이므로 지울 때 `rm -rf` 가 필요하다.
 
-설정 파일 2개(`embedEtcd.yaml`, `user.yaml`)는 저장소에 있으므로 소스와 함께 들어온다.
+**이 전환으로 개발과 운영이 같은 엔진을 쓰게 됐다.** 예전에는 Windows가
+Docker Milvus **서버**, 운영이 **Lite** 라 동작이 달랐고, 그 차이가
+⑩(HNSW 거부)·⑪(PK 키 차이)을 **운영에서만** 드러나게 했다.
+전환 실측은 `docs/milvus_lite_3x.md` 참조.
 
-```powershell
-docker compose -f serving/milvus-dev/docker-compose.yml up -d
-docker compose -f serving/milvus-dev/docker-compose.yml ps
-```
-
-`scripts/dev_setup.ps1`의 [5/5] 단계도 **같은 컨테이너**(`ax-milvus-dev`)를 만든다.
-이미지·볼륨이 같아 둘을 섞어 써도 데이터가 갈리지 않는다.
-
-#### ③ .env 설정
-
-```powershell
-MILVUS_LITE_PATH=http://localhost:19530     # ★ 파일 경로가 아니다
-EMBEDDING_DEVICE=cpu                        # 노트북 GPU는 LLM이 쓴다
-RERANKER_DEVICE=cpu
-```
-
-`.env.dev.example`이 이 값들로 되어 있으므로 그대로 복사하면 된다.
-
-#### ④ 확인
-
-```powershell
-curl http://localhost:9091/healthz          # Milvus 자체 헬스체크
-.\.venv\Scripts\python.exe -c "from pymilvus import MilvusClient; `
-    print(MilvusClient('http://localhost:19530').list_collections())"
-```
-
-기동 로그에 `Milvus 서버 모드로 접속한다`가 찍히면 정상이다.
-
-#### ⑤ 정지·정리
-
-```powershell
-docker compose -f serving/milvus-dev/docker-compose.yml down       # 정지 (데이터 유지)
-docker compose -f serving/milvus-dev/docker-compose.yml down -v    # 데이터까지 삭제
-```
-
-#### ⚠️ Docker Milvus로 검증한 것은 운영 검증이 아니다
-
-**서버 모드와 Lite는 동작이 다르다.** 실제로 두 건이 운영에서만 터졌다:
-
-| | 서버 (Windows 개발) | Lite (운영 L40) |
-|---|---|---|
-| HNSW 인덱스 | 수용 | **거부** → 컬렉션 생성 실패 |
-| search 결과 PK | `hit["chunk_id"]` | `hit["id"]` → **`KeyError`** |
-
-둘 다 코드에서 해결했지만(`AUTOINDEX`, `_primary_key`), **같은 종류의 차이가 또
-있을 수 있다.** Windows Docker Milvus는 로직·프롬프트 개발용으로만 쓰고,
-**배포 전 최종 검증은 반드시 Lite 환경(WSL 또는 L40)에서** 한다.
-상세는 `docs/troubleshooting.md` ⑩⑪⑫.
-
-#### 앱만 Windows에 두고 Milvus를 WSL에 둘 수는 없다
-
-Milvus Lite는 서버가 아니라 **임베디드 라이브러리**다. **유닉스 도메인 소켓**으로
-통신하므로 포워딩할 TCP 포트가 없고, 동봉 바이너리가 리눅스 ELF다.
-vLLM·임베딩·리랭커는 TCP라 WSL 분리가 가능하지만 **Milvus Lite는 불가능하다.**
+> Docker Milvus 서버 URI(`http://localhost:19530`)도 코드가 계속 허용한다
+> (디버깅·비교용). 다만 **동작이 미묘하게 다르므로 검증은 Lite에서** 한다.
 
 ### 8-5. Windows 반입 목록
 
 | 항목 | 크기 | 비고 |
 |---|---|---|
 | Python 3.11.x 설치 파일 | ~30MB | 내부망에 없을 수 있다 |
-| wheel 묶음 | ~0.5GB | `requirements-dev-windows.lock` 기준 |
-| **Docker Desktop 설치 파일** | ~500MB | Milvus 구동에 필수 |
-| **Milvus 이미지 tar** | ~2.4GB | `docker save` |
+| wheel 묶음 | ~0.5GB | `requirements-dev-windows.lock` 기준 (Milvus Lite 포함) |
 | `A.X-4.0-Light-Q4_K_M.gguf` | ~4.4GB | llama.cpp용 |
 | llama.cpp 릴리스 + cudart | ~50MB | `tools/llama.cpp/` |
 | `bge-m3`, `bge-reranker-v2-m3` | ~4GB | 임베딩·리랭커 |

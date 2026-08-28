@@ -309,8 +309,10 @@ PYTHONPATH=src python scripts/eval_retrieval.py    # hit@n 확인
 - **운영 규모 코퍼스에서의 검색 속도** — 이번 측정은 1,519청크 기준이다.
   파이썬 구현이라 규모가 커질수록 C++ 대비 불리해질 수 있다.
   L40 배포 후 실제 코퍼스로 재측정한다.
-- `serving/milvus-dev/`(Docker compose·etcd 설정)는 **당장 지우지 않았다.**
-  3.x 운영이 안정된 뒤 정리한다 — 되돌릴 필요가 생길 수 있다.
+- `serving/milvus-dev/`(Docker compose·etcd 설정)는 **삭제했다.** 죽은 설정을
+  남겨 두면 누군가 띄워서 **DB가 갈린다** — Docker 서버에 적재한 문서는
+  Lite 파일에 보이지 않는다. 되돌릴 일이 생기면 git 이력에서 꺼낸다.
+  코드는 서버 URI를 계속 허용하므로(`is_server_uri`) 설정 파일만 없을 뿐이다.
 
 ---
 
