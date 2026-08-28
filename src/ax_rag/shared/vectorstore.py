@@ -1,8 +1,9 @@
 """자식 청크 컬렉션 company_docs (interfaces.md §2).
 
 접속 모드는 MILVUS_LITE_PATH 값의 형태로 자동 결정된다 (get_client 참조).
-운영 L40과 WSL은 Milvus Lite(임베디드 파일), 개발 Windows는 milvus-lite
-휠이 없어 Docker standalone URI를 쓴다.
+운영·개발 모두 Milvus Lite(임베디드)를 쓴다 — 3.x가 순수 파이썬이라
+Windows에서도 동작한다. Milvus 서버 URI도 계속 허용하지만(디버깅·비교용),
+**동작이 미묘하게 다르므로 검증은 Lite에서 한다** (docs/milvus_lite_3x.md).
 
 Lite는 포트가 없는 임베디드 라이브러리이므로 단일 uvicorn 워커를 전제한다
 (파일 락 충돌 방지, CLAUDE.md).
@@ -22,7 +23,7 @@ from urllib.parse import urlparse
 from pymilvus import DataType, MilvusClient
 
 from ax_rag.shared.config import get_config
-from ax_rag.shared.logging_setup import get_logger
+from ax_rag.shared.logging_setup import get_logger, silence_milvus_lite_noise
 
 logger = get_logger(__name__)
 
@@ -53,21 +54,20 @@ def _check_localhost_only(uri: str) -> None:
 
 
 def _check_lite_available(uri: str) -> None:
-    """Lite 파일 모드가 이 플랫폼에서 가능한지 확인한다.
+    """milvus-lite가 설치돼 있는지 확인한다.
 
-    milvus-lite는 리눅스·macOS 전용이라 Windows에는 휠이 없다. 확인 없이
-    MilvusClient에 넘기면 `ModuleNotFoundError: No module named 'milvus_lite'`
-    라는, 원인도 해법도 알려주지 않는 오류가 난다. 여기서 미리 잡아 준다.
+    확인 없이 MilvusClient에 넘기면 `ModuleNotFoundError: No module named
+    'milvus_lite'` 라는, 원인도 해법도 알려주지 않는 오류가 난다.
+    에어갭에서는 검색으로 해결할 수 없으므로 여기서 해법까지 알려 준다.
     """
     if find_spec("milvus_lite") is not None:
         return
     raise RuntimeError(
-        f"Milvus Lite를 쓸 수 없는 환경인데 파일 경로가 지정됐다: MILVUS_LITE_PATH={uri}\n"
-        f"  현재 플랫폼: {sys.platform} (milvus-lite는 리눅스·macOS 전용)\n"
-        "  Windows에서는 Docker Milvus standalone을 띄우고 URI로 지정한다:\n"
-        "    docker compose -f serving/milvus-dev/docker-compose.yml up -d\n"
-        "    MILVUS_LITE_PATH=http://localhost:19530\n"
-        "  자세한 절차는 docs/deploy_l40.md의 Windows 항목을 참조한다."
+        f"milvus-lite가 설치돼 있지 않은데 파일 경로가 지정됐다: MILVUS_LITE_PATH={uri}\n"
+        f"  현재 플랫폼: {sys.platform}\n"
+        "  설치: pip install milvus-lite==3.2.1 faiss-cpu==1.15.0\n"
+        "        (에어갭이면 반입한 wheel로: pip install --no-index --find-links <경로> ...)\n"
+        "  3.x는 순수 파이썬이라 Windows·Linux 모두 동작한다 — docs/milvus_lite_3x.md 참조."
     )
 
 
@@ -90,6 +90,9 @@ def get_client() -> MilvusClient:
     else:
         _check_lite_available(uri)
         Path(uri).parent.mkdir(parents=True, exist_ok=True)
+        # Lite를 쓸 때만 나오는 gRPC 미구현 소음을 여기서 막는다.
+        # setup_logging()을 부르지 않는 진입점(스크립트 등)도 있어 접속 지점에서 건다
+        silence_milvus_lite_noise()
         logger.info("Milvus Lite(임베디드) 모드로 접속한다: %s", uri)
     return MilvusClient(uri)
 

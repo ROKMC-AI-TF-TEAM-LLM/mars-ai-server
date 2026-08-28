@@ -42,15 +42,15 @@ def test_localhost_Milvus_서버는_허용한다(uri: str) -> None:
 
 
 def test_milvus_lite가_없으면_해법을_알려주며_실패한다(monkeypatch: pytest.MonkeyPatch) -> None:
-    """★ Windows에서 파일 경로를 지정한 경우. 오류 메시지가 해법을 담아야 한다."""
+    """★ 에어갭에서는 검색으로 해결할 수 없다 — 메시지가 해법을 담아야 한다."""
     monkeypatch.setattr("ax_rag.shared.vectorstore.find_spec", lambda name: None)
     with pytest.raises(RuntimeError) as exc:
         _check_lite_available("./data/milvus_ax.db")
 
     message = str(exc.value)
     assert "./data/milvus_ax.db" in message  # 어떤 값이 문제인지
-    assert "docker compose" in message  # 무엇을 해야 하는지
-    assert "MILVUS_LITE_PATH=http://localhost:19530" in message  # 어떻게 고치는지
+    assert "milvus-lite" in message  # 무엇이 없는지
+    assert "--no-index" in message  # 에어갭에서는 어떻게 까는지
 
 
 def test_milvus_lite가_있으면_통과한다(monkeypatch: pytest.MonkeyPatch) -> None:

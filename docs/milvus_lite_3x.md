@@ -107,7 +107,40 @@ needs start with [unix, http, https, tcp] or a local file endswith [.db]
 `MILVUS_LITE_PATH=./data/milvus_ax.db` 처럼 **확장자를 유지한다.**
 이름은 파일 같지만 실제로는 디렉터리다 — 백업·삭제 시 `rm -rf`가 필요하다.
 
-### 2-5. search 결과의 PK 위치가 바뀐다
+### 2-5. gRPC 미구현 로그가 쏟아진다 (무해하지만 반드시 지운다)
+
+매 작업마다 ERROR 트레이스백이 나온다.
+
+```
+ERROR grpc._server: Exception calling application: Method not implemented!
+  File ".../pymilvus/grpc_gen/milvus_pb2_grpc.py", line 991, in AllocTimestamp
+    raise NotImplementedError('Method not implemented!')
+WARNING [__setup_ts_by_request]: failed to get mvccTs from milvus server,
+        use client-side ts instead
+```
+
+**원인** — `pymilvus`는 분산 Milvus 서버를 전제로 `AllocTimestamp`(전역 타임스탬프
+할당)를 호출한다. 임베디드 milvus-lite에는 조율할 노드가 없어 구현이 없고,
+클라이언트 타임스탬프로 폴백한다.
+
+**정합성 영향 없음 (실측)** — MARS는 적재 직후 BM25 재빌드를 위해 전체 조회를
+하므로 방금 insert한 청크가 반드시 보여야 한다. 50행씩 5회 반복 검증:
+
+| 경로 | 결과 |
+|---|---|
+| `flush()` 후 조회 (앱의 실제 경로) | **5/5 정확** |
+| `flush()` 없이 조회 | **정확** (300/300) |
+
+단일 프로세스 임베디드라 분산 타임스탬프 조율 자체가 불필요하다.
+
+**해결** — `logging_setup.MilvusLiteNoiseFilter` 로 **이 두 메시지만** 지운다.
+지우지 않으면 ERROR 트레이스백이 로그를 덮어 진짜 장애를 놓친다.
+
+> ⚠️ **로거에 건 필터는 하위 로거에서 전파돼 온 레코드에 적용되지 않는다.**
+> `mvccTs` 경고는 `pymilvus.orm.iterator` 가 내고 `pymilvus` 핸들러로 전파되므로,
+> `pymilvus` 로거에만 걸면 그대로 남는다. **로거와 핸들러 양쪽에** 걸어야 한다.
+
+### 2-6. search 결과의 PK 위치가 바뀐다
 
 | 환경 | PK 위치 |
 |---|---|
@@ -118,7 +151,7 @@ needs start with [unix, http, https, tcp] or a local file endswith [.db]
 **코드 수정은 필요 없다.** `_primary_key()`가 이미 양쪽을 모두 읽는다
 (`docs/troubleshooting.md` ⑪). 한쪽만 읽지 않기로 한 판단이 결과적으로 맞았다.
 
-### 2-6. `pymilvus 2.5.4`와 일부 호출이 맞지 않는다 (앱 경로 아님)
+### 2-7. `pymilvus 2.5.4`와 일부 호출이 맞지 않는다 (앱 경로 아님)
 
 `list_collections()`는 gRPC 스키마가 달라 실패한다.
 
@@ -230,6 +263,7 @@ insert, flush, delete, drop_collection, query, query_iterator, search
 | `scripts/dev_setup.ps1` | **Docker 단계 제거** (5단계 → 4단계), Docker 사전 검사 제거 |
 | `.env.dev.example` | `MILVUS_LITE_PATH`를 파일 경로로 |
 | `vectorstore.py` / `parent_store.py` | `ensure_loaded()` (커밋 `176865d`) |
+| `logging_setup.py` | `MilvusLiteNoiseFilter` — gRPC 미구현 소음 제거 |
 
 `pymilvus`는 **2.5.4를 유지한다.** 앱이 쓰는 호출은 전부 정상 동작하며(§2-6),
 함께 올리면 검증 범위가 불필요하게 넓어진다.
