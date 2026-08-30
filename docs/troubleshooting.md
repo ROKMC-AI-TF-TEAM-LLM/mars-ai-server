@@ -100,6 +100,27 @@ lock에 없으면 에어갭에서 **아예 설치가 되지 않는다** — `pip
 `setuptools` 만 넣고 `wheel` 을 빠뜨리면 **거기서 다시 멈춘다** (실제로 겪었다).
 `--no-index` 예행연습을 하지 않으면 내부망에 들어가서야 발견한다.
 
+### ③-1. 목록에 넣는 것만으로는 부족하다 — 설치 순서와 플래그
+
+두 패키지를 반입해도 **한 명령에 몰아 깔면 의도대로 되지 않는다** (WSL 실측).
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| 반입한 `setuptools 84.0.0`이 아니라 venv 기본값(65.5.1)이 남는다 | 이미 있으면 pip이 업그레이드하지 않는다 | `--upgrade` 로 **먼저** 설치 |
+| `kiwipiepy_model` 이 legacy `setup.py install` 경로 | 빌드 시점에 `wheel` 이 아직 없다 | 〃 |
+| `FlagEmbedding` 이 legacy 경로 | **설치에도 `--no-binary` 를 줬다** | 설치에는 주지 않는다 |
+
+```bash
+pip install --no-index --find-links wheels/ --upgrade setuptools wheel   # ① 먼저
+pip install --no-index --find-links wheels/ -r requirements-linux-app.txt  # ② --no-binary 없이
+```
+
+**`--no-binary` 는 다운로드 전용 플래그다.** `FlagEmbedding` sdist를 *받기* 위해
+필요하고, *설치* 때는 폴더에 sdist밖에 없으므로 pip이 알아서 쓴다.
+설치에도 주면 PEP 517 빌드가 막혀 legacy 경로를 탄다.
+
+셋 다 고치면 경고가 완전히 사라진다 (실측 확인).
+
 **재발 방지** — lock에 `setuptools` 와 `wheel` 이 **둘 다** 있는지 확인하고,
 반입 전 반드시 `--no-index` 로 설치 예행연습을 한다 (`deploy_l40.md` §1-2).
 

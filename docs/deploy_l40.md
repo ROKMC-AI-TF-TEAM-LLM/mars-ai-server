@@ -153,18 +153,37 @@ python3.11 -m venv venv-llm
 venv-llm/bin/pip install --no-index --find-links wheels/ -r requirements-linux-llm.txt
 
 python3.11 -m venv venv-app
+# ★ setuptools·wheel을 먼저 따로 올린다 (아래 설명)
+venv-app/bin/pip install --no-index --find-links wheels/ --upgrade setuptools wheel
 venv-app/bin/pip install --no-index --find-links wheels/ -r requirements-linux-app.txt
 
 # 검증: 둘 다 통과해야 한다
 venv-llm/bin/pip check && venv-app/bin/pip check
 ```
 
-> `setuptools`·`wheel`은 `requirements-linux-app.txt` 맨 앞에 있어 따로 깔 필요가 없다.
-> **버전 상한은 없다** — 예전엔 `pymilvus 2.5.4`가 `pkg_resources`를 요구해
-> `setuptools<81`로 묶었으나 `pymilvus 3.x`는 쓰지 않는다.
-> 다만 **반입 목록에는 반드시 있어야 한다.** `pip`은 자기 자신 외에 이 둘을
+> **★ `setuptools`·`wheel`을 왜 먼저 따로 까는가** (실측, WSL AlmaLinux 9)
+>
+> 요구사항 파일에 함께 적어 두면 두 가지가 어긋난다.
+>
+> | 증상 | 원인 | 해결 |
+> |---|---|---|
+> | 반입한 `setuptools 84.0.0`이 아니라 venv 기본값(65.5.1)이 남는다 | 이미 설치돼 있으면 pip이 업그레이드하지 않는다 | **`--upgrade`로 먼저** |
+> | `kiwipiepy_model`이 legacy `setup.py install` 경로를 탄다 | 같은 명령 안에서 깔려 **빌드 시점엔 `wheel`이 없다** | **먼저** |
+>
+> 설치 자체는 성공하지만 의도한 버전·경로가 아니다.
+>
+> **★ 설치에는 `--no-binary`를 주지 않는다.** 그 플래그는 **다운로드 전용**이다
+> (§1에서 `FlagEmbedding` sdist를 받기 위해 쓴다). 설치 때도 주면
+> `FlagEmbedding`이 legacy `setup.py install` 경로를 탄다 — 폴더에 sdist밖에
+> 없으므로 플래그 없이도 pip이 알아서 쓴다. 빼면 legacy 경고가 완전히 사라진다.
+>
+> 두 패키지는 **반입 목록에도 반드시 있어야 한다.** `pip`은 자기 자신 외에 이 둘을
 > 제공하지 않으므로, 빠지면 `FlagEmbedding` sdist 빌드가 아예 되지 않는다
-> (`docs/troubleshooting.md` ③).
+> (`docs/troubleshooting.md` ③). 그래서 요구사항 파일에도 계속 남겨 둔다 —
+> `pip download` 가 이 목록을 보고 받기 때문이다.
+>
+> **버전 상한은 없다.** 예전엔 `pymilvus 2.5.4`가 `pkg_resources`를 요구해
+> `setuptools<81`로 묶었으나 `pymilvus 3.x`는 쓰지 않는다.
 >
 > `triton`은 **3.4.0**이다. `requirements.txt`에 적힌 3.5.0은 `torch 2.8.0`이
 > `triton==3.4.0`을 정확히 못 박아 **설치 불가**다 (Windows에는 triton이 없어
@@ -428,6 +447,9 @@ Docker Milvus **서버**, 운영이 **Lite** 라 동작이 달랐고, 그 차이
 
 ```powershell
 python -m venv .venv
+# ★ setuptools·wheel 먼저 (사유는 §2 참조)
+.\.venv\Scripts\python.exe -m pip install --no-index --find-links wheels-win `
+    --upgrade setuptools wheel
 .\.venv\Scripts\python.exe -m pip install --no-index --find-links wheels-win `
     -r requirements-dev-windows.lock
 .\.venv\Scripts\python.exe -m pip check

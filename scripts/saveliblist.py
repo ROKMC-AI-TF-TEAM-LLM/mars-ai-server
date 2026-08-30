@@ -3,7 +3,7 @@ import csv
 from packaging.utils import parse_wheel_filename
 
 # 현재 폴더
-folder = Path("C:/Users/User/Desktop/3차 라이브러리 정리/marsai_shared")
+folder = Path("C:/Users/User/Desktop/3차 라이브러리 정리/marsai_window")
 
 # 결과 CSV 파일
 output_file = "wheel_list.csv"

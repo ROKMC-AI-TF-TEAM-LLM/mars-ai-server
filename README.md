@@ -17,7 +17,7 @@ LangGraph + vLLM(A.X 4.0 Light) + Milvus Lite + BGE-M3 + bge-reranker-v2-m3 + bm
 ```bash
 python -m venv .venv          # Python 3.11 필수
 source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install setuptools wheel  # FlagEmbedding이 sdist라 빌드에 필요 (버전 상한 없음)
+pip install --upgrade setuptools wheel   # ★ 먼저 — FlagEmbedding이 sdist라 빌드에 필요
 pip install -e ".[dev]"       # 개발 도구 (pytest, ruff)
 pip install -r requirements.txt   # 런타임 의존성 (L40 서버 기준)
 cp .env.example .env
