@@ -93,16 +93,32 @@ git bundle create mars.bundle main
 
 ```bash
 # ④ OS 패키지 (RPM) — 없으면 vLLM이 죽는다. §0 참조
-#    같은 버전의 RHEL/AlmaLinux에서 받아야 한다
-dnf download --resolve --destdir rpms/ gcc gcc-c++ python3.11-devel
+#    ★ 운영과 같은 메이저 버전의 RHEL 계열에서 받는다 (RHEL 9 ↔ AlmaLinux 9)
+
+# ⚠️ dnf download --resolve --alldeps 로는 부족하다 — libstdc++-devel 등을 놓친다 (실측).
+#    repoquery로 의존성 폐포를 재귀적으로 구해서 받는다
+WANT="gcc gcc-c++ python3.11-devel"
+CLOSURE=$(dnf repoquery --requires --resolve --recursive --qf '%{name}' $WANT | sort -u)
+dnf download --destdir rpms/ --arch x86_64,noarch $WANT $CLOSURE
 ```
+
+**반드시 에어갭 조건으로 검증한다** — 저장소를 전부 끄고 로컬 파일만으로 깔아 본다.
+
+```bash
+dnf install -y --disablerepo='*' rpms/gcc-c++-*.rpm rpms/libstdc++-devel-*.rpm
+gcc --version && g++ --version
+echo '#include <Python.h>
+int main(void){return 0;}' > /tmp/t.c && gcc -I/usr/include/python3.11 -c /tmp/t.c -o /tmp/t.o
+```
+
+실측(AlmaLinux 9.8): 폐포 **428종 / 430개 파일 / 302MB**, 저장소 차단 설치 성공.
 
 ### 1-1. L40 반입 목록 (체크리스트)
 
 | ☐ | 항목 | 크기(약) | 없으면 생기는 일 |
 |---|---|---:|---|
 | ☐ | `wheels/` (app + llm 두 벌) | ~5 GB | 설치 불가 |
-| ☐ | **`rpms/` (gcc, python3.11-devel + 의존성)** | ~50 MB | **첫 질의에 엔진 사망** ★ |
+| ☐ | **`rpms/` (gcc·gcc-c++·python3.11-devel + 의존성 폐포)** | **~300 MB** | **첫 질의에 엔진 사망** ★ |
 | ☐ | `models/A.X-4.0-Light` (fp16 원본) | ~15 GB | LLM 기동 불가 |
 | ☐ | `models/bge-m3` | ~2.3 GB | 임베딩 불가 |
 | ☐ | `models/bge-reranker-v2-m3` | ~2.3 GB | 리랭크 불가 |

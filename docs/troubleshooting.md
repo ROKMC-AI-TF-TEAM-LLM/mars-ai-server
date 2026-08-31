@@ -172,6 +172,45 @@ dnf install -y gcc gcc-c++
 **재발 방지** — `docs/deploy_l40.md` 의 에어갭 전제에 gcc를 필수로 명시했다 (커밋 `931d468`).
 **내부망에는 RPM도 함께 반입해야 한다.**
 
+### ⑤-1. RPM 받을 때 `--resolve --alldeps` 로는 부족하다
+
+**증상** — 받아 둔 RPM으로 설치하려는데 의존성이 빈다.
+
+```
+Error: Problem: conflicting requests
+ - nothing provides libstdc++-devel = 11.5.0-14.el9.alma.1
+   needed by gcc-c++-11.5.0-14.el9.alma.1.x86_64
+```
+
+**원인** — `dnf download --resolve --alldeps` 는 **직접 의존성 위주로만** 받는다.
+`gcc-c++` 처럼 자기 버전과 정확히 묶인 하위 패키지를 놓친다.
+
+**해결** — `repoquery` 로 **재귀 폐포**를 구해서 받는다.
+
+```bash
+WANT="gcc gcc-c++ python3.11-devel"
+CLOSURE=$(dnf repoquery --requires --resolve --recursive --qf '%{name}' $WANT | sort -u)
+dnf download --destdir rpms/ --arch x86_64,noarch $WANT $CLOSURE
+```
+
+| | `--resolve --alldeps` | `repoquery --recursive` |
+|---|---:|---:|
+| 받은 개수 | 160 | **430** |
+| 용량 | 143 MB | **302 MB** |
+| `libstdc++-devel` | ❌ | ✅ |
+| 저장소 차단 설치 | **실패** | **성공** |
+
+**재발 방지** — 받은 뒤 반드시 **저장소를 끄고** 설치해 본다. 이걸 하지 않으면
+내부망에서야 빈 의존성을 발견한다.
+
+```bash
+dnf install -y --disablerepo='*' rpms/gcc-c++-*.rpm rpms/libstdc++-devel-*.rpm
+```
+
+> ⚠️ **운영이 RHEL이면 RHEL에서 받는 것이 원칙이다.** AlmaLinux는 RHEL과
+> 바이너리 호환이라 대개 설치되지만, 배포판이 다르면 서명·버전이 어긋날 수 있다.
+> 구독이 있는 RHEL 장비에서 받을 수 있으면 그쪽을 쓴다.
+
 ## ⑥ 헤더가 없으면 기동은 되고 첫 요청에 죽는다 ★ 운영 블로커 (가장 위험)
 
 **증상**
