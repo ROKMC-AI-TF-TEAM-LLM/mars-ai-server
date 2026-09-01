@@ -1,4 +1,4 @@
-# L40 운영 — venv-llm (vLLM 서빙 전용, 포트 8000)
+﻿# L40 운영 — venv-llm (vLLM 서빙 전용, 포트 8000)
 #
 # requirements.txt의 "서빙 코어" 블록과 동일하다.
 # venv-app과 **같은 환경에 설치할 수 없다**: vllm은 transformers==4.57.1을,
@@ -16,3 +16,24 @@ tokenizers==0.22.1
 # (vllm 0.11.0은 triton을 직접 요구하지 않는다). Windows에는 triton이 없어
 # 개발에서 드러나지 않았고, 내부망 설치 시점에 터졌을 값이다
 triton==3.4.0
+
+# ── 반입 번들 중복 제거용 고정 (venv-app과 같은 버전) ────────────────────
+# 아래는 vllm이 끌고 오는 전이 의존성이다. 고정하지 않으면 최신으로 해석돼
+# venv-app과 다른 버전이 되고, **번들에 같은 패키지가 두 개 들어간다.**
+# 반입 승인은 파일 단위라 개수가 곧 절차 비용이다.
+#
+# vllm의 하한을 모두 만족하는 값으로 골랐고(requests>=2.26.0, openai>=1.99.1),
+# AlmaLinux 9에서 --no-index 설치와 vllm import를 확인했다.
+openai==1.109.1
+requests==2.32.3
+packaging==24.2
+python-dotenv==1.0.1
+dill==0.3.8
+fsspec==2024.3.1
+
+# ⚠️ fastapi·starlette·pydantic·transformers는 **통일할 수 없다** (실측):
+#   pydantic      vllm>=2.11.7        vs venv-app 2.10.4
+#   transformers  vllm>=4.55.2        vs FlagEmbedding==4.44.2  ← venv 분리 사유
+#   starlette     fastapi 0.115.6는 <0.42.0을 요구하는데,
+#                 vllm이 끌고 오는 prometheus-fastapi-instrumentator는 >=1.0.0
+# 고정을 시도하면 ResolutionImpossible이 난다. 번들에 두 버전이 남는 것이 정상이다

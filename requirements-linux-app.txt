@@ -1,4 +1,4 @@
-# L40 운영 — venv-app (MARS 앱 + 임베딩 8001 + 리랭커 8002)
+﻿# L40 운영 — venv-app (MARS 앱 + 임베딩 8001 + 리랭커 8002)
 #
 # venv-llm과 분리한다 (사유는 requirements-linux-llm.txt 참조).
 # transformers는 여기서 고정하지 않는다 — FlagEmbedding이 4.44.2를 끌고 온다.

@@ -1,4 +1,4 @@
-# 개발 노트북(Windows) 전용 의존성 — scripts/dev_setup.ps1이 설치하는 것과 동일.
+﻿# 개발 노트북(Windows) 전용 의존성 — scripts/dev_setup.ps1이 설치하는 것과 동일.
 #
 # requirements.txt(L40 운영)를 그대로 쓰면 안 된다. 두 가지가 다르다:
 #
