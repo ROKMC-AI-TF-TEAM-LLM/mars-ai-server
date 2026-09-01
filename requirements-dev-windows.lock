@@ -106,7 +106,6 @@ tqdm==4.68.4
 transformers==4.44.2
 typing_extensions==4.16.0
 tzdata==2026.3
-ujson==5.13.0
 urllib3==2.7.0
 uvicorn==0.34.0
 watchfiles==1.2.0
