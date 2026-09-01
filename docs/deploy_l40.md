@@ -455,7 +455,7 @@ Docker Milvus **서버**, 운영이 **Lite** 라 동작이 달랐고, 그 차이
 | Python 3.11.x 설치 파일 | ~30MB | 내부망에 없을 수 있다 |
 | wheel 묶음 | ~0.5GB | `requirements-dev-windows.lock` 기준 (Milvus Lite 포함) |
 | `A.X-4.0-Light-Q4_K_M.gguf` | ~4.4GB | llama.cpp용 |
-| llama.cpp 릴리스 + cudart | ~50MB | `tools/llama.cpp/` |
+| llama.cpp 릴리스 + cudart | **~627MB** | `tools/llama.cpp/` — 출처·해시는 [provenance_llamacpp.md](provenance_llamacpp.md) |
 | `bge-m3`, `bge-reranker-v2-m3` | ~4GB | 임베딩·리랭커 |
 | 소스 (`git bundle`) | 수 MB | |
 
