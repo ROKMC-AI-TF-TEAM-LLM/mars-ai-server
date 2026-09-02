@@ -30,10 +30,21 @@ packaging==24.2
 python-dotenv==1.0.1
 dill==0.3.8
 fsspec==2024.3.1
+uvicorn==0.34.0
+pydantic-settings==2.7.0
 
-# ⚠️ fastapi·starlette·pydantic·transformers는 **통일할 수 없다** (실측):
-#   pydantic      vllm>=2.11.7        vs venv-app 2.10.4
-#   transformers  vllm>=4.55.2        vs FlagEmbedding==4.44.2  ← venv 분리 사유
-#   starlette     fastapi 0.115.6는 <0.42.0을 요구하는데,
-#                 vllm이 끌고 오는 prometheus-fastapi-instrumentator는 >=1.0.0
-# 고정을 시도하면 ResolutionImpossible이 난다. 번들에 두 버전이 남는 것이 정상이다
+# ⚠️ 아래 7종은 **통일할 수 없다** (전부 실측으로 ResolutionImpossible 확인).
+# 번들에 두 버전이 남는 것이 정상이며, 억지로 맞추려 하지 말 것.
+#
+#   transformers  vllm>=4.55.2      vs FlagEmbedding==4.44.2   ← venv 분리 사유 그 자체
+#   tokenizers    transformers 4.57.1이 >=0.22.0을 요구 (venv-app은 0.19.x)
+#   numpy         numba가 <2.3을 못 박는다 (venv-app은 2.4.6)
+#   pydantic      vllm>=2.11.7      vs venv-app 2.10.4
+#   pydantic-core pydantic을 따라간다
+#   starlette     vllm이 끌고 오는 prometheus-fastapi-instrumentator가 >=1.0.0을
+#                 요구하는데, fastapi 0.115.6은 <0.42.0을 요구한다
+#   fastapi       ★ fastapi 자체가 아니라 **starlette에 끌려 올라간 것**이다.
+#                 vllm의 요구는 >=0.115.0뿐이라 0.115.6도 만족하지만,
+#                 위 starlette 충돌 때문에 새 fastapi(0.141.1)를 쓸 수밖에 없다.
+#                 합치려면 venv-app을 0.141.1로 올려야 하고, 그때 pydantic까지
+#                 함께 움직여 API 계약(SSE) 재검증이 필요하다 — 별도 과제다

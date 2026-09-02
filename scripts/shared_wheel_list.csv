@@ -80,7 +80,6 @@ pycparser-3.0-py3-none-any.whl,pycparser,3.0,py3,none,any,47.04
 pydantic-2.10.4-py3-none-any.whl,pydantic,2.10.4,py3,none,any,421.65
 pydantic-2.13.4-py3-none-any.whl,pydantic,2.13.4,py3,none,any,461.19
 pydantic_extra_types-2.11.1-py3-none-any.whl,pydantic-extra-types,2.11.1,py3,none,any,77.66
-pydantic_settings-2.15.0-py3-none-any.whl,pydantic-settings,2.15.0,py3,none,any,67.79
 pydantic_settings-2.7.0-py3-none-any.whl,pydantic-settings,2.7.0,py3,none,any,28.86
 pygments-2.21.0-py3-none-any.whl,pygments,2.21.0,py3,none,any,1220.85
 pymilvus-3.0.1-py3-none-any.whl,pymilvus,3.0.1,py3,none,any,377.75
@@ -115,5 +114,4 @@ typing_inspection-0.4.4-py3-none-any.whl,typing-inspection,0.4.4,py3,none,any,14
 tzdata-2026.3-py2.py3-none-any.whl,tzdata,2026.3,py3,none,any,340.01
 urllib3-2.7.0-py3-none-any.whl,urllib3,2.7.0,py3,none,any,128.01
 uvicorn-0.34.0-py3-none-any.whl,uvicorn,0.34.0,py3,none,any,60.85
-uvicorn-0.52.4-py3-none-any.whl,uvicorn,0.52.4,py3,none,any,78.0
 wheel-0.48.0-py3-none-any.whl,wheel,0.48.0,py3,none,any,32.54
