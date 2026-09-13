@@ -17,6 +17,7 @@ import requests
 from ax_rag.shared import vectorstore
 from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
+from ax_rag.shared.store_guard import STORE_LOCK, ensure_store_ready
 
 logger = get_logger(__name__)
 
@@ -46,7 +47,9 @@ def _check_milvus() -> dict:
     """Milvus 접속 + 컬렉션 존재 확인. 컬렉션이 없어도 접속되면 ok (첫 적재 전 상태)."""
     config = get_config()
     try:
-        exists = vectorstore.get_client().has_collection(config.MILVUS_COLLECTION)
+        with STORE_LOCK.read():
+            ensure_store_ready()
+            exists = vectorstore.get_client().has_collection(config.MILVUS_COLLECTION)
     except Exception as exc:
         return {"ok": False, "detail": f"접속 실패: {exc.__class__.__name__}: {exc}"}
     detail = f"컬렉션 {config.MILVUS_COLLECTION} " + ("있음" if exists else "없음 (첫 적재 전)")

@@ -1,182 +1,215 @@
-"""indexer_graph/ingest.py 유닛 테스트 — 저장소·그래프를 가짜로 대체해 순서/잠금 계약 검증."""
+"""실패 주입으로 문서 갱신 전후 데이터와 복구 저널 계약을 검증한다."""
 
-from __future__ import annotations
-
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-from ax_rag.indexer_graph import ingest as ingest_module
-from ax_rag.indexer_graph.ingest import IngestBusyError, delete_document, ingest_file
+from ax_rag.indexer_graph import graph as graph_module
+from ax_rag.indexer_graph import ingest
+from ax_rag.shared.config import get_config
+from ax_rag.shared.store_guard import ensure_store_ready, recovery_path
 
 
-class _CallRecorder:
-    """호출 순서와 인자를 기록하는 가짜 저장소/그래프."""
+class Store:
+    """부분 쓰기 실패도 재현하는 인메모리 저장소."""
 
     def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.invoked_state: dict | None = None
-        self.children_deleted = 3
-        self.parents_deleted = 1
-        self.child_scope: tuple[str, str] | None = None
-        self.purge_scope: tuple[str, str] | None = None
-        self.deleted_parent_ids: list[str] = []
+        self.children = [
+            {
+                "chunk_id": "old",
+                "parent_id": "old-parent",
+                "text": "기존 규정",
+                "source_doc": "휴가규정.md",
+                "project_id": "proj-a",
+                "embedding": [0.0] * 1024,
+                "domain": "HR",
+                "owning_department": "HR_TEAM",
+                "visibility": "ALL",
+                "chunk_index": 0,
+                "created_at": 1,
+                "doc_classification": "NORMAL",
+            },
+            {
+                "chunk_id": "other",
+                "parent_id": "other-parent",
+                "text": "타 부대 규정",
+                "source_doc": "휴가규정.md",
+                "project_id": "proj-b",
+                "embedding": [0.0] * 1024,
+                "domain": "HR",
+                "owning_department": "HR_TEAM",
+                "visibility": "ALL",
+                "chunk_index": 0,
+                "created_at": 1,
+                "doc_classification": "NORMAL",
+            },
+        ]
+        self.parents = {"old-parent": "기존 규정", "other-parent": "타 부대 규정"}
+        self.bm25 = deepcopy(self.children)
+        self.failure = ""
+        self.broken = False
+        self.mutations = 0
 
-    def fake_load(self, path: Path) -> tuple[str, list[dict] | None]:
-        self.calls.append("load")
-        return "제1조 휴가는 연 21일로 한다.", None
+    def fail(self, stage: str) -> None:
+        if self.broken or stage == self.failure:
+            self.failure = ""
+            raise RuntimeError(f"{stage} 저장 실패")
 
-    def fake_fetch_parent_ids(self, source_doc: str, project_id: str = "") -> list[str]:
-        # 자식 삭제 **전에** 불려야 한다 (지워진 뒤엔 참조를 못 모은다)
-        self.calls.append("fetch_parent_ids")
-        self.purge_scope = (source_doc, project_id)
-        return ["p1", "p2"]
+    def fetch(self, name: str, project: str) -> list[dict]:
+        return deepcopy(
+            [c for c in self.children if (c["source_doc"], c["project_id"]) == (name, project)]
+        )
 
-    def fake_delete_children(self, source_doc: str, project_id: str = "") -> int:
-        self.calls.append("delete_children")
-        self.child_scope = (source_doc, project_id)
-        return self.children_deleted
+    def delete(self, name: str, project: str = "") -> int:
+        self.mutations += 1
+        self.fail("delete")
+        old = self.fetch(name, project)
+        self.children = [c for c in self.children if c not in old]
+        return len(old)
 
-    def fake_delete_parents(self, parent_ids: list[str]) -> int:
-        self.calls.append("delete_parents")
-        self.deleted_parent_ids = list(parent_ids)
-        return self.parents_deleted
+    def delete_parents(self, ids: list[str]) -> int:
+        count = sum(pid in self.parents for pid in ids)
+        for pid in ids:
+            self.parents.pop(pid, None)
+        return count
 
-    def fake_invoke(self, state: dict) -> dict:
-        self.calls.append("invoke")
-        self.invoked_state = state
-        return {"chunks_indexed": 7}
+    def insert_parents(self, rows: list[dict]) -> int:
+        self.parents.update({p["parent_id"]: p["parent_text"] for p in rows})
+        self.fail("parents")
+        return len(rows)
 
-    def fake_rebuild(self) -> None:
-        self.calls.append("rebuild_bm25")
+    def insert(self, rows: list[dict]) -> int:
+        self.children.extend(deepcopy(rows))
+        self.fail("children")
+        return len(rows)
+
+    def rebuild(self) -> None:
+        self.bm25 = deepcopy(self.children)
+        self.fail("bm25")
 
 
 @pytest.fixture()
-def recorder(monkeypatch: pytest.MonkeyPatch) -> _CallRecorder:
-    rec = _CallRecorder()
-    monkeypatch.setattr(ingest_module, "load_document", rec.fake_load)
-    monkeypatch.setattr(ingest_module.vectorstore, "fetch_parent_ids", rec.fake_fetch_parent_ids)
-    monkeypatch.setattr(ingest_module.vectorstore, "delete_by_source_doc", rec.fake_delete_children)
-    monkeypatch.setattr(ingest_module.parent_store, "delete_by_parent_ids", rec.fake_delete_parents)
-    monkeypatch.setattr(ingest_module.graph, "invoke", rec.fake_invoke)
-    monkeypatch.setattr(ingest_module, "rebuild_bm25", rec.fake_rebuild)
-    return rec
-
-
-# ---------- ingest_file ----------
-
-
-def test_적재는_추출_검증_후_삭제_재적재_순서다(recorder: _CallRecorder) -> None:
-    result = ingest_file(Path("휴가규정.md"), "HR", "HR_TEAM", "ALL")
-    # 추출 실패 시 기존 데이터를 지우지 않기 위해 load가 반드시 삭제보다 먼저다.
-    # 부모 참조(fetch_parent_ids)는 자식 삭제 **전에** 모아야 한다
-    assert recorder.calls == [
-        "load",
+def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BM25_INDEX_PATH", str(tmp_path / "bm25"))
+    get_config.cache_clear()
+    db = Store()
+    monkeypatch.setattr(ingest, "load_document", lambda path: ("새 규정은 휴가가 20일이다.", None))
+    monkeypatch.setattr(graph_module, "_embed_texts", lambda texts: [[1.0] * 1024 for _ in texts])
+    monkeypatch.setattr(ingest.vectorstore, "fetch_document_children", db.fetch)
+    monkeypatch.setattr(
+        ingest.vectorstore,
         "fetch_parent_ids",
-        "delete_children",
-        "delete_parents",
-        "invoke",
-    ]
-    assert result == {
-        "source_doc": "휴가규정.md",
-        "project_id": "",
-        "deleted_children": 3,
-        "deleted_parents": 1,
-        "chunks_indexed": 7,
-    }
+        lambda name, project: [r["parent_id"] for r in db.fetch(name, project)],
+    )
+    monkeypatch.setattr(ingest.vectorstore, "delete_by_source_doc", db.delete)
+    monkeypatch.setattr(ingest.vectorstore, "insert_children", db.insert)
+    monkeypatch.setattr(ingest.parent_store, "get_parent", lambda pid: db.parents.get(pid, ""))
+    monkeypatch.setattr(ingest.parent_store, "delete_by_parent_ids", db.delete_parents)
+    monkeypatch.setattr(ingest.parent_store, "insert_parents", db.insert_parents)
+    monkeypatch.setattr(ingest, "rebuild_bm25", db.rebuild)
+    yield db
+    get_config.cache_clear()
 
 
-def test_갱신_삭제는_같은_프로젝트로_한정된다(recorder: _CallRecorder) -> None:
-    """★ project_id를 빼면 동명의 남의 프로젝트 문서를 덮어쓴다."""
-    ingest_file(Path("휴가규정.md"), "HR", "HR_TEAM", "ALL", project_id="proj-a")
-    assert recorder.child_scope == ("휴가규정.md", "proj-a")
-    assert recorder.purge_scope == ("휴가규정.md", "proj-a")
+def update() -> dict:
+    return ingest.ingest_file(Path("휴가규정.md"), "HR", "HR_TEAM", "DEPT_ONLY", "proj-a")
 
 
-def test_부모는_이름이_아니라_parent_id로_지운다(recorder: _CallRecorder) -> None:
-    """★ 부모 컬렉션에는 project_id가 없다 — 이름으로 지우면 남의 부모가 사라진다."""
-    ingest_file(Path("휴가규정.md"), "HR", "HR_TEAM", "ALL", project_id="proj-a")
-    assert recorder.deleted_parent_ids == ["p1", "p2"]
+def test_갱신은_같은_프로젝트만_교체한다(store: Store) -> None:
+    other = deepcopy(store.fetch("휴가규정.md", "proj-b"))
+    result = update()
+    assert result["deleted_children"] == result["deleted_parents"] == 1
+    mine = store.fetch("휴가규정.md", "proj-a")
+    assert len(mine) == result["chunks_indexed"] > 0
+    assert all("20일" in row["text"] and row["visibility"] == "DEPT_ONLY" for row in mine)
+    assert store.fetch("휴가규정.md", "proj-b") == other
+    assert store.parents["other-parent"] == "타 부대 규정"
+    assert "old-parent" not in store.parents
+    assert store.bm25 == store.children
+    assert not recovery_path().exists()
 
 
-def test_적재_상태에_메타데이터가_그대로_전달된다(recorder: _CallRecorder) -> None:
-    ingest_file(Path("국방훈령.pdf"), "DIRECTIVE", "HQ", "DEPT_ONLY")
-    state = recorder.invoked_state or {}
-    assert state["source_doc"] == "국방훈령.pdf"
-    assert state["domain"] == "DIRECTIVE"
-    assert state["owning_department"] == "HQ"
-    assert state["visibility"] == "DEPT_ONLY"
-    assert "휴가는 연 21일" in state["text"]
+def test_임베딩_실패는_삭제나_저널을_만들지_않는다(store, monkeypatch) -> None:
+    before = deepcopy(store.__dict__)
+
+    def fail(texts):
+        raise TimeoutError("임베딩 타임아웃")
+
+    monkeypatch.setattr(graph_module, "_embed_texts", fail)
+    with pytest.raises(TimeoutError):
+        update()
+    assert store.__dict__ == before
+    assert not recovery_path().exists()
 
 
-def test_project_id를_안_주면_전사_공용으로_적재된다(recorder: _CallRecorder) -> None:
-    """기존 호출부(bulk_ingest, API)가 그대로 동작해야 한다 — 빈 값 = 전사 공용."""
-    ingest_file(Path("휴가규정.md"), "HR", "HR_TEAM", "ALL")
-    assert (recorder.invoked_state or {})["project_id"] == ""
+def test_추출_실패도_기존_데이터를_보존한다(store, monkeypatch) -> None:
+    monkeypatch.setattr(ingest, "load_document", lambda path: ("   ", None))
+    with pytest.raises(ValueError, match="추출"):
+        update()
+    assert store.mutations == 0
 
 
-def test_project_id를_주면_그대로_전달된다(recorder: _CallRecorder) -> None:
-    ingest_file(Path("부대지침.md"), "HR", "HR_TEAM", "ALL", project_id="proj-1")
-    assert (recorder.invoked_state or {})["project_id"] == "proj-1"
+@pytest.mark.parametrize("stage", ["delete", "parents", "children", "bm25"])
+def test_부분_저장_실패도_본문_ACL_임베딩_부모_BM25를_복구한다(store, stage) -> None:
+    before_children, before_parents = deepcopy((store.children, store.parents))
+    store.failure = stage
+    with pytest.raises(RuntimeError, match="저장 실패"):
+        update()
+    assert sorted(store.children, key=lambda r: r["chunk_id"]) == sorted(
+        before_children, key=lambda r: r["chunk_id"]
+    )
+    assert store.parents == before_parents
+    assert store.bm25 == store.children
+    assert not recovery_path().exists()
+    ensure_store_ready()
 
 
-def test_텍스트_추출_실패면_삭제_없이_ValueError(
-    recorder: _CallRecorder, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def empty_load(path: Path) -> tuple[str, None]:
-        recorder.calls.append("load")
-        return "   ", None  # 스캔본 PDF처럼 공백만 추출된 경우
+def test_복구까지_실패하면_저널로_차단하고_이후_재실행한다(store, monkeypatch) -> None:
+    before = deepcopy(store.fetch("휴가규정.md", "proj-a"))
 
-    monkeypatch.setattr(ingest_module, "load_document", empty_load)
-    with pytest.raises(ValueError, match="추출하지 못했다"):
-        ingest_file(Path("스캔본.pdf"), "HR", "HR_TEAM", "ALL")
-    assert recorder.calls == ["load"]  # 기존 데이터 삭제가 일어나지 않았다
+    def fail_after_delete(rows):
+        store.broken = True
+        raise RuntimeError("DB 연결 중단")
 
-
-# ---------- delete_document ----------
-
-
-def test_삭제_후_BM25를_재빌드한다(recorder: _CallRecorder) -> None:
-    result = delete_document("휴가규정.md")
-    assert recorder.calls == [
-        "fetch_parent_ids",
-        "delete_children",
-        "delete_parents",
-        "rebuild_bm25",
-    ]
-    assert result == {
-        "source_doc": "휴가규정.md",
-        "project_id": "",
-        "deleted_children": 3,
-        "deleted_parents": 1,
-    }
+    monkeypatch.setattr(ingest.vectorstore, "insert_children", fail_after_delete)
+    with pytest.raises(RuntimeError, match="DB 연결"):
+        update()
+    assert recovery_path().exists()
+    with pytest.raises(RuntimeError, match="미완료"):
+        ensure_store_ready()
+    with pytest.raises(RuntimeError, match="미완료"):
+        update()
+    # 프로세스 메모리의 실패 플래그 없이도 디스크 저널만으로 복구한다.
+    store.broken = False
+    monkeypatch.setattr(ingest.vectorstore, "insert_children", store.insert)
+    assert ingest.recover_pending_ingest()
+    assert store.fetch("휴가규정.md", "proj-a") == before
+    assert store.bm25 == store.children
+    assert not ingest.recover_pending_ingest()
 
 
-def test_project_id를_생략하면_전사_문서만_지운다(recorder: _CallRecorder) -> None:
-    """★ 이름만으로 지우면 동명의 프로젝트 문서까지 사라진다."""
-    delete_document("휴가규정.md")
-    assert recorder.child_scope == ("휴가규정.md", "")
+def test_신규_문서_실패도_부분_부모를_남기지_않는다(store) -> None:
+    before = deepcopy((store.children, store.parents))
+    store.failure = "parents"
+    with pytest.raises(RuntimeError):
+        ingest.ingest_file(Path("새문서.md"), "HR", "HR_TEAM", "ALL")
+    assert (store.children, store.parents) == before
+    assert not recovery_path().exists()
 
 
-def test_삭제도_프로젝트로_한정된다(recorder: _CallRecorder) -> None:
-    delete_document("휴가규정.md", project_id="proj-a")
-    assert recorder.child_scope == ("휴가규정.md", "proj-a")
+def test_삭제는_프로젝트를_한정하고_BM25를_갱신한다(store) -> None:
+    result = ingest.delete_document("휴가규정.md", "proj-a")
+    assert result["deleted_children"] == result["deleted_parents"] == 1
+    assert store.fetch("휴가규정.md", "proj-b")
+    assert store.bm25 == store.children
 
 
-def test_미적재_문서는_BM25_재빌드를_건너뛴다(recorder: _CallRecorder) -> None:
-    recorder.children_deleted = 0
-    recorder.parents_deleted = 0
-    result = delete_document("없는문서.md")
-    assert "rebuild_bm25" not in recorder.calls
-    assert result["deleted_children"] == 0
-
-
-def test_잠금_경합이면_IngestBusyError(recorder: _CallRecorder) -> None:
-    """다른 적재가 진행 중(잠금 보유)이면 기다렸다가 예외를 낸다."""
-    assert ingest_module._LOCK.acquire(timeout=1)  # 진행 중인 적재를 흉내
+def test_잠금_경합이면_데이터_변경없이_거부한다(store) -> None:
+    assert ingest._LOCK.acquire(timeout=1)
     try:
-        with pytest.raises(IngestBusyError):
-            delete_document("휴가규정.md", wait_seconds=0.05)
+        with pytest.raises(ingest.IngestBusyError):
+            ingest.delete_document("휴가규정.md", wait_seconds=0.01)
     finally:
-        ingest_module._LOCK.release()
-    assert recorder.calls == []  # 잠금을 못 얻으면 아무것도 삭제하지 않는다
+        ingest._LOCK.release()
+    assert store.mutations == 0

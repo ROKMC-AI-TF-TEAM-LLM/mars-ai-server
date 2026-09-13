@@ -5,9 +5,9 @@
         --domain HR --department HR_TEAM --visibility ALL
 
 동작 (architecture.md §9, 공용 로직 ingest.ingest_file):
-1. 텍스트 추출 검증 (실패 시 기존 데이터를 지우지 않고 중단)
-2. company_docs 자식 청크 + document_parents 부모 청크 삭제
-3. indexer_graph로 재적재 (BM25 전체 재빌드는 embed_and_upsert 노드가 수행)
+1. 텍스트 추출·청킹·임베딩 준비 (실패 시 기존 데이터 보존)
+2. 기존 행·임베딩의 복구 저널 저장 후 부모·자식 청크 교체
+3. BM25 재빌드. 실패 시 기존 데이터 복구, 복구 실패 시 recover_ingest.py 사용
 
 BM25는 부분 삭제가 불가하므로 전체 재빌드된다 (야간 배치 전제).
 POST /documents API와 같은 경로(ingest_file)를 사용한다.

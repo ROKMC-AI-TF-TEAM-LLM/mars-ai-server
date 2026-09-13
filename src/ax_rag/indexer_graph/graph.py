@@ -15,7 +15,9 @@ from ax_rag.indexer_graph.chunking import chunk_parent_child
 from ax_rag.indexer_graph.state import IndexState
 from ax_rag.shared import bm25_store, parent_store, vectorstore
 from ax_rag.shared.config import get_config
+from ax_rag.shared.departments import validate_department
 from ax_rag.shared.logging_setup import get_logger
+from ax_rag.shared.store_guard import STORE_LOCK, ensure_store_ready
 
 logger = get_logger(__name__)
 
@@ -90,12 +92,12 @@ def rebuild_bm25() -> None:
     bm25_store.build_bm25_index(texts, metadatas)
 
 
-def embed_and_upsert(state: IndexState) -> dict:
-    """임베딩 서버 호출 → 부모/자식 Milvus insert → BM25 인덱스 재빌드."""
+def prepare_rows(state: IndexState) -> list[dict]:
+    """저장소 변경 없이 임베딩과 행 생성을 완료한다. 실패하면 기존 문서는 무사하다."""
+    department = validate_department(state["owning_department"])
     chunks = state.get("chunks") or []
     if not chunks:
-        logger.warning("적재할 청크가 없다: %s", state["source_doc"])
-        return {"chunks_indexed": 0}
+        raise ValueError(f"적재할 청크가 없다: {state['source_doc']}")
 
     embeddings = _embed_texts([c["text"] for c in chunks])
 
@@ -109,7 +111,7 @@ def embed_and_upsert(state: IndexState) -> dict:
             "source_doc": state["source_doc"],
             "chunk_index": c["chunk_index"],
             "domain": state["domain"],
-            "owning_department": state["owning_department"],
+            "owning_department": department,
             "visibility": state["visibility"],
             "project_id": state.get("project_id") or "",  # ""=전사 공용
             "doc_classification": "NORMAL",  # 예약 필드: 현재 항상 NORMAL (interfaces.md §2)
@@ -118,10 +120,17 @@ def embed_and_upsert(state: IndexState) -> dict:
         for c, embedding in zip(chunks, embeddings, strict=True)
     ]
 
-    # 부모를 먼저 넣어 자식 parent_id 참조가 조회 불가능해지는 구간을 없앤다
-    parent_store.insert_parents(state.get("parents") or [])
-    inserted = vectorstore.insert_children(rows)
-    rebuild_bm25()
+    return rows
+
+
+def embed_and_upsert(state: IndexState) -> dict:
+    """직접 그래프 적재 경로. 갱신은 ingest.ingest_file의 복구 계약을 사용한다."""
+    rows = prepare_rows(state)
+    with STORE_LOCK:
+        ensure_store_ready()
+        parent_store.insert_parents(state.get("parents") or [])
+        inserted = vectorstore.insert_children(rows)
+        rebuild_bm25()
     logger.info("적재 완료: %s → 자식 %d건", state["source_doc"], inserted)
     return {"chunks_indexed": inserted}
 

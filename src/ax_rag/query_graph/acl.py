@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import re
 
+from ax_rag.shared.departments import validate_department
+
 # Milvus 표현식 인젝션 방지: 값에 허용하는 문자 (한글/영숫자/밑줄/하이픈)
 _UNSAFE_CHARS = re.compile(r"[^0-9A-Za-z_\-가-힣]")
 
@@ -39,7 +41,7 @@ def build_acl_filter_expr(domain: str, user_department: str, project_id: str = "
     project_id가 정제 후 비게 되면(허용 문자 없음) 전사 문서만 남는다 —
     범위가 좁아지는 방향이라 fail-closed다.
     """
-    department = _sanitize(user_department)
+    department = validate_department(user_department or "")
     safe_domain = _sanitize(domain)
     safe_project = _sanitize(project_id)
 
@@ -70,7 +72,7 @@ def filter_by_acl(
     메타데이터가 없으면 전사 공용("")으로 취급되므로, BM25 corpus가 그 필드를
     반드시 실어야 한다 (indexer_graph.graph._BM25_META_FIELDS).
     """
-    department = user_department or ""
+    department = validate_department(user_department or "")
     scope_project = project_id or ""
     allowed: list[dict] = []
     for candidate in candidates:

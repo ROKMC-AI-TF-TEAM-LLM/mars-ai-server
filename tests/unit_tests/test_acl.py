@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ax_rag.query_graph.acl import build_acl_filter_expr, filter_by_acl
 
 _CANDIDATES = [
@@ -76,9 +78,8 @@ class TestBuildAclFilterExpr:
 
     def test_표현식_인젝션_문자는_제거된다(self) -> None:
         """따옴표/or 삽입으로 필터를 무력화할 수 없어야 한다."""
-        expr = build_acl_filter_expr("HR", 'X" or visibility != "')
-        assert '" or ' not in expr.replace('visibility == "ALL" or', "")
-        assert "Xorvisibility" in expr  # 허용 문자만 남는다
+        with pytest.raises(ValueError, match="부서"):
+            build_acl_filter_expr("HR", 'X" or visibility != "')
 
 
 # ---------- 프로젝트 격리 (보안 회귀 방지선) ----------

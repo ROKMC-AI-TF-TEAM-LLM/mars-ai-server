@@ -278,6 +278,23 @@ def _document_filter(source_doc: str, project_id: str) -> str:
     return f'source_doc == "{source_doc}" and project_id == "{project_id}"'
 
 
+def fetch_document_children(source_doc: str, project_id: str) -> list[dict]:
+    """복구용 전체 행 조회. 16,384행 제한으로 백업이 잘리는 폴백은 허용하지 않는다."""
+    iterator = get_client().query_iterator(
+        collection_name=get_collection(),
+        filter=_document_filter(source_doc, project_id),
+        output_fields=["*"],
+        batch_size=_ITERATOR_BATCH,
+    )
+    rows: list[dict] = []
+    try:
+        while batch := iterator.next():
+            rows.extend(batch)
+    finally:
+        iterator.close()
+    return rows
+
+
 def fetch_parent_ids(source_doc: str, project_id: str = "") -> list[str]:
     """문서 1건에 속한 자식들의 parent_id 목록 (중복 제거).
 

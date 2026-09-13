@@ -13,6 +13,7 @@ from ax_rag.query_graph.nodes.rerank import rerank
 from ax_rag.query_graph.state import QueryState
 from ax_rag.shared.config import get_config
 from ax_rag.shared.logging_setup import get_logger
+from ax_rag.shared.store_guard import STORE_LOCK, ensure_store_ready
 
 logger = get_logger(__name__)
 
@@ -27,10 +28,13 @@ def run_search(state: QueryState, query: str) -> list[dict]:
     도메인을 인자로 받는 경로를 만들지 말 것 (CLAUDE.md 보안 규칙).
     """
     working: dict = {**state, "rewritten_query": query, "search_queries": [query]}
-    working.update(dense_retrieve(working))
-    working.update(bm25_retrieve(working))
-    working.update(fuse(working))
-    working.update(rerank(working))
+    # 두 검색 축과 부모 치환이 같은 저장소 상태를 보도록 교체 전체와 동기화한다.
+    with STORE_LOCK.read():
+        ensure_store_ready()
+        working.update(dense_retrieve(working))
+        working.update(bm25_retrieve(working))
+        working.update(fuse(working))
+        working.update(rerank(working))
     return working.get("retrieved_chunks") or []
 
 

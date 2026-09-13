@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from tempfile import mkdtemp
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
@@ -26,6 +27,7 @@ from ax_rag.shared import vectorstore
 from ax_rag.shared.config import DOMAINS, get_config
 from ax_rag.shared.ingest_jobs import IngestJobRegistry
 from ax_rag.shared.logging_setup import get_logger
+from ax_rag.shared.store_guard import STORE_LOCK, ensure_store_ready
 
 logger = get_logger(__name__)
 
@@ -68,7 +70,9 @@ def list_documents(
         ),
     ] = None,
 ) -> DocumentListOutput:
-    all_documents = vectorstore.list_documents()
+    with STORE_LOCK.read():
+        ensure_store_ready()
+        all_documents = vectorstore.list_documents()
     if domain:
         wanted = domain.strip().upper()
         all_documents = [d for d in all_documents if d["domain"] == wanted]
@@ -122,7 +126,7 @@ def _run_ingest_job(
     """백그라운드 적재 실행 (BackgroundTasks가 스레드풀에서 호출).
 
     적재/삭제는 ingest 모듈 잠금으로 직렬화되므로, 동시에 여러 건이
-    접수돼도 한 번에 하나씩 순서대로 처리된다.
+    접수돼도 한 번에 하나씩 처리된다. 접수 순서의 FIFO는 보장하지 않는다.
     """
     _ingest_jobs.mark_running(job_id)
     try:
@@ -162,12 +166,15 @@ def _run_ingest_job(
         "- 지원 형식: `.md`(섹션 인식) | `.txt` | `.pdf` — 텍스트 인코딩은 "
         "UTF-8·UTF-8 BOM·CP949 자동 인식, 스캔본(이미지) PDF는 실패한다 "
         "(OCR 미지원). 최대 50MB\n"
-        "- **같은 `name`이 이미 적재돼 있으면 갱신**: 기존 청크를 지우고 재적재한다\n"
+        "- **같은 `(project_id, name)`이면 갱신**: 청킹·임베딩을 먼저 준비하고 교체한다. "
+        "저장 실패 시 기존 데이터를 복구하며 복구 실패 시 운영자 복구 전 검색을 차단한다\n"
         "- 적재는 임베딩 때문에 오래 걸려(CPU에서 문서당 수 분) **202 + 작업(job)으로 "
         "접수**하고 백그라운드에서 실행한다. 진행 상태는 응답의 `job_id`로 "
         "`GET /documents/jobs/{job_id}` 폴링\n"
-        "- 작업은 한 번에 하나만 실행된다 (BM25 전체 재빌드 직렬화). 나머지는 순서 대기\n"
-        "- `visibility=DEPT_ONLY`면 `department` 필수\n\n"
+        "- 작업은 한 번에 하나만 실행된다 (BM25 전체 재빌드 직렬화). FIFO 보장은 없다\n"
+        "- `visibility=DEPT_ONLY`면 `department` 필수. 부서 코드는 한글·영숫자·"
+        "밑줄·하이픈만 허용하며 최대 32바이트 (앞뒤 공백 제거·대문자화)\n"
+        "- 원본은 작업별 임시 디렉터리에 격리한다. 자동 정리는 아직 적용하지 않는다\n\n"
         "400: 파라미터 오류(형식·도메인·빈 본문), 413: 50MB 초과"
     ),
     openapi_extra={
@@ -229,16 +236,17 @@ async def upload_document(
         max_mb = _MAX_UPLOAD_BYTES // (1024 * 1024)
         raise HTTPException(status_code=413, detail=f"파일이 너무 크다 (최대 {max_mb}MB)")
 
-    # 스테이징 경로를 프로젝트별로 나눈다. 파일명만 쓰면 같은 이름을 올린 다른
-    # 프로젝트가 이 파일을 덮어쓰고, **적재는 백그라운드라** 나중에 실행되는 작업이
-    # 남의 내용을 자기 프로젝트로 적재한다 (파일 쓰기는 _LOCK 밖이라 직렬화되지 않는다).
-    # project_id는 validate_upload가 영숫자·밑줄·하이픈으로 제한하므로 경로 탈출은 없다
+    # 파일명(source_doc)은 보존하되, 같은 프로젝트의 동명 업로드도 작업별로 격리한다.
     upload_dir = Path(get_config().UPLOAD_DIR)
-    if project_normalized:
-        upload_dir = upload_dir / project_normalized
     upload_dir.mkdir(parents=True, exist_ok=True)
-    saved_path = upload_dir / safe_name
-    saved_path.write_bytes(content)
+    job_dir = Path(mkdtemp(prefix="ingest-", dir=upload_dir))
+    saved_path = job_dir / safe_name
+    try:
+        saved_path.write_bytes(content)
+    except OSError:
+        saved_path.unlink(missing_ok=True)
+        job_dir.rmdir()
+        raise
 
     job = _ingest_jobs.create(
         source_doc=safe_name,
@@ -317,7 +325,7 @@ def get_ingest_job(job_id: str) -> IngestJobStatus:
         "- `name`은 GET /documents가 반환한 문서 파일명 (한글·공백은 URL 인코딩)\n"
         "- **동기 처리**: BM25 전체 재빌드 때문에 수 초~수십 초 걸릴 수 있다\n"
         "- 404: 적재되지 않은 문서, 409: 다른 적재/삭제 작업이 진행 중 (10초 대기 후)\n\n"
-        "⚠ 되돌릴 수 없다. 업로드 원본이 UPLOAD_DIR에 남아 있으면 재적재는 가능"
+        "⚠ 되돌릴 수 없다. 재적재 원본은 미들웨어의 영속 저장소에서 다시 전송할 것"
     ),
 )
 def delete_document(

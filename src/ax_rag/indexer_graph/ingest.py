@@ -7,13 +7,18 @@
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 from pathlib import Path
 
-from ax_rag.indexer_graph.graph import graph, rebuild_bm25
+from ax_rag.indexer_graph.graph import chunk, prepare_rows, rebuild_bm25
 from ax_rag.indexer_graph.loaders import load_document
 from ax_rag.shared import parent_store, vectorstore
+from ax_rag.shared.config import get_config
+from ax_rag.shared.departments import validate_department
 from ax_rag.shared.logging_setup import get_logger
+from ax_rag.shared.store_guard import STORE_LOCK, ensure_store_ready, recovery_path
 
 logger = get_logger(__name__)
 
@@ -23,6 +28,96 @@ _LOCK = threading.Lock()
 
 class IngestBusyError(RuntimeError):
     """다른 적재/삭제 작업이 진행 중이라 잠금을 얻지 못했다."""
+
+
+def _restore_snapshot(snapshot: dict) -> None:
+    """갱신 전 행으로 되돌린다. 반복 실행 가능하며 실패 시 저널을 유지한다."""
+    config = get_config()
+    if (snapshot["milvus_uri"], snapshot["collection"]) != (
+        config.MILVUS_LITE_PATH,
+        config.MILVUS_COLLECTION,
+    ):
+        raise ValueError("복구 저널의 Milvus 설정이 현재 설정과 다르다")
+    vectorstore.delete_by_source_doc(snapshot["source_doc"], snapshot["project_id"])
+    parent_store.delete_by_parent_ids(
+        [p["parent_id"] for p in snapshot["parents"]] + snapshot["new_parent_ids"]
+    )
+    if parent_store.insert_parents(snapshot["parents"]) != len(snapshot["parents"]):
+        raise RuntimeError("기존 부모 청크 복구 건수가 일치하지 않는다")
+    restored = vectorstore.insert_children(snapshot["children"])
+    if restored != len(snapshot["children"]):
+        raise RuntimeError("기존 자식 청크 복구 건수가 일치하지 않는다")
+    rebuild_bm25()
+    recovery_path().unlink()
+
+
+def recover_pending_ingest() -> bool:
+    """서비스를 중지한 운영자가 미완료 갱신을 복구한다. 저널이 없으면 False."""
+    with _LOCK, STORE_LOCK:
+        path = recovery_path()
+        if not path.exists():
+            return False
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        _restore_snapshot(snapshot)
+        logger.info("미완료 갱신 복구 완료: %s", snapshot["source_doc"])
+        return True
+
+
+def _replace_document(state: dict, rows: list[dict]) -> tuple[int, int]:
+    """준비된 문서를 교체한다. 예외 시 복구하며 실패 저널은 검색을 차단한다."""
+    with STORE_LOCK:
+        ensure_store_ready()
+        source_doc, project_id = state["source_doc"], state["project_id"]
+        old_rows = vectorstore.fetch_document_children(source_doc, project_id)
+        old_parents: list[dict] = []
+        for parent_id in sorted({row["parent_id"] for row in old_rows}):
+            text = parent_store.get_parent(parent_id)
+            if not text:
+                raise RuntimeError(f"백업할 부모 청크가 없다: {parent_id}")
+            old_parents.append(
+                {"parent_id": parent_id, "parent_text": text, "source_doc": source_doc}
+            )
+        config = get_config()
+        snapshot = {
+            "source_doc": source_doc,
+            "project_id": project_id,
+            "milvus_uri": config.MILVUS_LITE_PATH,
+            "collection": config.MILVUS_COLLECTION,
+            "children": old_rows,
+            "parents": old_parents,
+            "new_parent_ids": [p["parent_id"] for p in state["parents"]],
+        }
+        # 저널을 디스크에 확정하기 전에는 기존 데이터를 변경하지 않는다.
+        path = recovery_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        with temporary.open("w", encoding="utf-8") as journal:
+            json.dump(snapshot, journal, ensure_ascii=False, default=float)
+            journal.flush()
+            os.fsync(journal.fileno())
+        temporary.replace(path)
+        try:
+            deleted_children = vectorstore.delete_by_source_doc(source_doc, project_id)
+            if deleted_children != len(old_rows):
+                raise RuntimeError("기존 자식 청크 삭제 건수가 일치하지 않는다")
+            deleted_parents = parent_store.delete_by_parent_ids(
+                [p["parent_id"] for p in old_parents]
+            )
+            if parent_store.insert_parents(state["parents"]) != len(state["parents"]):
+                raise RuntimeError("새 부모 청크 적재 건수가 일치하지 않는다")
+            inserted = vectorstore.insert_children(rows)
+            if inserted != len(rows):
+                raise RuntimeError("새 자식 청크 적재 건수가 일치하지 않는다")
+            rebuild_bm25()
+            path.unlink()
+        except Exception:
+            logger.exception("문서 교체 실패 → 기존 데이터 복구: %s", source_doc)
+            try:
+                _restore_snapshot(snapshot)
+            except Exception:
+                logger.exception("문서 복구 실패. 저널을 보존하고 검색·추가 적재를 차단한다")
+            raise
+        return deleted_children, deleted_parents
 
 
 def _purge_document(source_doc: str, project_id: str) -> tuple[int, int]:
@@ -47,12 +142,12 @@ def ingest_file(
     visibility: str,
     project_id: str = "",
 ) -> dict:
-    """문서 1건 적재(갱신): 텍스트 추출 검증 → 기존 청크 삭제 → 재적재.
+    """문서 갱신: 추출·청킹·임베딩 준비 → 복구 저널 → 저장소 교체.
 
     **같은 (project_id, source_doc)** 이 이미 적재돼 있으면 갱신이다. 파일명이
     같아도 프로젝트가 다르면 **별개 문서**라 서로 덮어쓰지 않는다.
-    텍스트 추출을 삭제보다 먼저 수행한다 — 추출 실패(스캔본 PDF 등) 시
-    기존 데이터를 지우지 않기 위해서다.
+    준비 실패는 기존 데이터를 변경하지 않는다. 교체 실패는 저널로 복구하며,
+    복구까지 실패하면 검색과 추가 변경을 차단한다.
 
     project_id는 ""(전사 공용)가 기본이다.
 
@@ -60,37 +155,31 @@ def ingest_file(
           "chunks_indexed"}. 추출 실패 시 ValueError.
     """
     source_doc = path.name
+    department = validate_department(owning_department)
     text, sections = load_document(path)
     if not text.strip():
         raise ValueError(f"{source_doc}: 텍스트를 추출하지 못했다 (스캔본 PDF?)")
 
     with _LOCK:
-        deleted_children, deleted_parents = _purge_document(source_doc, project_id)
-        if deleted_children or deleted_parents:
-            logger.info(
-                "%s(project=%s): 기존 자식 %d건·부모 %d건 삭제 (갱신 적재)",
-                source_doc,
-                project_id or "전사",
-                deleted_children,
-                deleted_parents,
-            )
-        result = graph.invoke(
-            {
-                "text": text,
-                "source_doc": source_doc,
-                "domain": domain,
-                "owning_department": owning_department,
-                "visibility": visibility,
-                "project_id": project_id,
-                "sections": sections,
-            }
-        )
+        ensure_store_ready()
+        state = {
+            "text": text,
+            "source_doc": source_doc,
+            "domain": domain,
+            "owning_department": department,
+            "visibility": visibility,
+            "project_id": project_id,
+            "sections": sections,
+        }
+        state.update(chunk(state))
+        rows = prepare_rows(state)
+        deleted_children, deleted_parents = _replace_document(state, rows)
     return {
         "source_doc": source_doc,
         "project_id": project_id,
         "deleted_children": deleted_children,
         "deleted_parents": deleted_parents,
-        "chunks_indexed": int(result.get("chunks_indexed") or 0),
+        "chunks_indexed": len(rows),
     }
 
 
@@ -107,7 +196,9 @@ def delete_project(project_id: str, wait_seconds: float = 10.0) -> dict:
         raise ValueError("project_id가 비어 있다 (전사 문서 전체 삭제 방지)")
     if not _LOCK.acquire(timeout=wait_seconds):
         raise IngestBusyError("다른 적재/삭제 작업이 진행 중이다")
+    STORE_LOCK.acquire()
     try:
+        ensure_store_ready()
         documents = [
             doc["source_doc"]
             for doc in vectorstore.list_documents()
@@ -142,6 +233,7 @@ def delete_project(project_id: str, wait_seconds: float = 10.0) -> dict:
             "deleted_parents": deleted_parents,
         }
     finally:
+        STORE_LOCK.release()
         _LOCK.release()
 
 
@@ -159,7 +251,9 @@ def delete_document(source_doc: str, project_id: str = "", wait_seconds: float =
     """
     if not _LOCK.acquire(timeout=wait_seconds):
         raise IngestBusyError("다른 적재/삭제 작업이 진행 중이다")
+    STORE_LOCK.acquire()
     try:
+        ensure_store_ready()
         deleted_children, deleted_parents = _purge_document(source_doc, project_id)
         if deleted_children or deleted_parents:
             rebuild_bm25()
@@ -178,4 +272,5 @@ def delete_document(source_doc: str, project_id: str = "", wait_seconds: float =
             "deleted_parents": deleted_parents,
         }
     finally:
+        STORE_LOCK.release()
         _LOCK.release()

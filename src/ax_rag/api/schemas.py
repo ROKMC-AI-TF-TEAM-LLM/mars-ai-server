@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ax_rag.shared.departments import validate_department
 
 
 class QueryRequest(BaseModel):
@@ -22,7 +24,9 @@ class QueryRequest(BaseModel):
         default="",
         description=(
             "ACL 판정 근거 부서 코드. 누락 시 가장 제한적으로 처리되어 "
-            "visibility=ALL 문서만 검색된다 (DEPT_ONLY 전부 배제)"
+            "visibility=ALL 문서만 검색된다 (DEPT_ONLY 전부 배제). "
+            "한글·영숫자·밑줄·하이픈만 허용하며 최대 32바이트. "
+            "앞뒤 공백 제거·영문 대문자화 후 형식 위반은 422"
         ),
         examples=["HR_TEAM"],
     )
@@ -78,6 +82,11 @@ class QueryRequest(BaseModel):
             ]
         ],
     )
+
+    @field_validator("user_department")
+    @classmethod
+    def _validate_department(cls, value: str) -> str:
+        return validate_department(value)
 
 
 class DocumentItem(BaseModel):

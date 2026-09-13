@@ -156,6 +156,10 @@ def bm25_search(query: str, top_k: int = 20) -> list[dict]:
         return []
     retriever, corpus = loaded
 
+    # 신규 적재 실패를 복구하면 코퍼스가 비어 있을 수 있다.
+    if not corpus:
+        return []
+
     query_tokens = tokenize(query)
     if not query_tokens:
         return []

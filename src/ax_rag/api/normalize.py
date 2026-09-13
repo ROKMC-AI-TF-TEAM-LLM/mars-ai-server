@@ -14,6 +14,7 @@ import re
 from ax_rag.indexer_graph.loaders import SUPPORTED_SUFFIXES
 from ax_rag.query_graph.tools import DOC_SEARCH, FORCIBLE_TOOLS, TOOL_NODES
 from ax_rag.shared.config import DOMAINS, get_config
+from ax_rag.shared.departments import validate_department
 from ax_rag.shared.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -184,7 +185,7 @@ def validate_upload(
     if visibility_normalized not in ("ALL", "DEPT_ONLY"):
         raise ValueError(f"허용되지 않는 visibility: {visibility!r} (허용: ALL, DEPT_ONLY)")
 
-    department_normalized = (department or "").strip().upper()
+    department_normalized = validate_department(department or "")
     if visibility_normalized == "DEPT_ONLY" and not department_normalized:
         raise ValueError("visibility=DEPT_ONLY에는 department(소유 부서)가 필요하다")
 
