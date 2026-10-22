@@ -13,9 +13,7 @@
 #   토큰은 %USERPROFILE%\.config\litellm\chatgpt\auth.json (저장소 밖)
 #
 # 설치(1회, 프로젝트 .venv와 분리 — requirements.txt 무관):
-#   py -3.11 -m venv tools\litellm-venv
-#   tools\litellm-venv\Scripts\python.exe -m pip install "litellm[proxy]==1.104.2"
-#   (★ 1.82.7/1.82.8은 악성 배포본. 버전 고정 유지)
+#   powershell -ExecutionPolicy Bypass -File scripts\setup_litellm_sub.ps1
 #
 # 사용: powershell -ExecutionPolicy Bypass -File serving\start_llm_sub.ps1
 # =====================================================================
@@ -31,7 +29,7 @@ $litellm = Join-Path $root "tools\litellm-venv\Scripts\litellm.exe"
 $config = Join-Path $PSScriptRoot "litellm_sub.yaml"
 
 if (-not (Test-Path $litellm)) {
-    Write-Error "litellm이 없다: $litellm (스크립트 상단 '설치' 참고)"
+    Write-Error "litellm이 없다: $litellm (먼저 scripts\setup_litellm_sub.ps1 실행)"
     exit 1
 }
 if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {

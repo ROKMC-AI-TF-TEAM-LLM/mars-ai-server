@@ -20,12 +20,14 @@
 | 파일 | 내용 |
 |---|---|
 | `serving/start_llm_sub.ps1` | 실행 스크립트 (포트 점유 검사, 외부 호출 차단용 환경변수, 경고 출력) |
+| `scripts/setup_litellm_sub.ps1` | 설치 스크립트 (venv 생성, 버전 고정 설치, 버전 일치와 .pth 점검). `dev_setup.ps1`은 수정 안 함 |
 | `serving/litellm_sub.yaml` | LiteLLM 모델 매핑 (alias → `chatgpt/responses/gpt-6-luna`) |
 | `docs/cclog/litellm_sub.md` | 이 문서 |
 | `tools/litellm-venv/` | LiteLLM 전용 venv (gitignore 대상, 저장소에 안 올라감) |
 
 ## 최초 1회 셋업
-1. 설치 (완료됨): `tools/litellm-venv`에 `litellm[proxy]==1.104.2`
+1. 설치: `powershell -ExecutionPolicy Bypass -File scripts\setup_litellm_sub.ps1` → `tools/litellm-venv`에 `litellm[proxy]==1.104.2`
+   - `tools/`는 gitignore 대상이라 새로 clone하면 다시 실행해야 함 (재설치는 `-Reinstall`)
    - 프로젝트 `.venv`와 `requirements.txt`는 건드리지 않음 (의존성 충돌·규칙 3 회피)
    - 1.104.2 선택 이유: 2주 이상 지난 안정판. 1.82.7과 1.82.8은 악성 배포본(2026-03)
 2. `start_llm_sub.ps1` 실행 → MARS에서 질의 1회
