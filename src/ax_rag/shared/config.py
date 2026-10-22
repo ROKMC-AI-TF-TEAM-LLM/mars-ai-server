@@ -10,6 +10,7 @@ get_config()를 통해서만 하며, 다른 모듈에서 os.environ에 직접
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -37,6 +38,9 @@ CHARS_PER_TOKEN: float = 2.2
 # 에어갭 규칙: 런타임 HTTP 호출이 허용되는 호스트
 _ALLOWED_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
 
+# logging_setup이 config를 참조하므로 순환 import를 피해 표준 로거를 쓴다
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class Config:
@@ -46,6 +50,9 @@ class Config:
     AX_BASE_URL: str
     AX_MODEL_NAME: str
     AX_API_KEY: str
+    # ⚠️ 테스트 전용 예외: true면 AX_BASE_URL만 localhost 검사에서 뺀다 (원격 vLLM).
+    # 검색 청크가 외부로 전송되므로 폐쇄망 배포에서는 반드시 false
+    AX_ALLOW_REMOTE_LLM: bool
 
     # --- 임베딩 서버 (BGE-M3) ---
     EMBEDDING_SERVER_URL: str
@@ -125,13 +132,16 @@ class Config:
     STREAM_TEXT_INTERVAL_MS: int = 200  # SSE text 간 전송 간격 (타자기 효과)
 
     def __post_init__(self) -> None:
-        """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다."""
-        for name in (
-            "AX_BASE_URL",
-            "EMBEDDING_SERVER_URL",
-            "RERANKER_SERVER_URL",
-            "MARS_SERVER_URL",
-        ):
+        """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다.
+
+        AX_ALLOW_REMOTE_LLM=true면 AX_BASE_URL만 예외로 두고 경고를 남긴다.
+        """
+        names = ["EMBEDDING_SERVER_URL", "RERANKER_SERVER_URL", "MARS_SERVER_URL"]
+        if self.AX_ALLOW_REMOTE_LLM:
+            logger.warning("원격 LLM 허용 모드: 에어갭 예외 (AX_BASE_URL=%s)", self.AX_BASE_URL)
+        else:
+            names.insert(0, "AX_BASE_URL")
+        for name in names:
             url: str = getattr(self, name)
             host = urlparse(url).hostname
             if host not in _ALLOWED_HOSTS:
@@ -177,6 +187,7 @@ def get_config() -> Config:
         AX_BASE_URL=_env_str("AX_BASE_URL", "http://localhost:8000/v1"),
         AX_MODEL_NAME=_env_str("AX_MODEL_NAME", "skt/A.X-4.0-Light"),
         AX_API_KEY=_env_str("AX_API_KEY", "EMPTY"),
+        AX_ALLOW_REMOTE_LLM=_env_bool("AX_ALLOW_REMOTE_LLM", False),
         EMBEDDING_SERVER_URL=_env_str("EMBEDDING_SERVER_URL", "http://localhost:8001/embed"),
         EMBEDDING_DEVICE=_env_str("EMBEDDING_DEVICE", "cuda"),
         EMBEDDING_MODEL_PATH=_env_str("EMBEDDING_MODEL_PATH", "./models/bge-m3"),

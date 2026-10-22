@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 import requests
 
@@ -29,7 +31,9 @@ def _patch_milvus(monkeypatch: pytest.MonkeyPatch, client: _FakeMilvusClient) ->
 
 
 def test_전부_정상이면_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(health_module.requests, "get", lambda url, timeout: _FakeResponse(200))
+    monkeypatch.setattr(
+        health_module.requests, "get", lambda url, headers, timeout: _FakeResponse(200)
+    )
     _patch_milvus(monkeypatch, _FakeMilvusClient(exists=True))
 
     result = health_module.check_dependencies()
@@ -39,7 +43,7 @@ def test_전부_정상이면_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_임베딩_다운이면_degraded_해당_서비스만_실패(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_get(url: str, timeout: float) -> _FakeResponse:
+    def fake_get(url: str, headers: dict | None, timeout: float) -> _FakeResponse:
         if ":8001" in url:
             raise requests.ConnectionError("connection refused")
         return _FakeResponse(200)
@@ -55,7 +59,7 @@ def test_임베딩_다운이면_degraded_해당_서비스만_실패(monkeypatch:
 
 
 def test_HTTP_200이_아니면_실패로_판정(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_get(url: str, timeout: float) -> _FakeResponse:
+    def fake_get(url: str, headers: dict | None, timeout: float) -> _FakeResponse:
         if ":8002" in url:
             return _FakeResponse(503)
         return _FakeResponse(200)
@@ -73,7 +77,7 @@ def test_LLM은_OpenAI_호환_models_경로로_확인한다(monkeypatch: pytest.
     """vLLM/llama.cpp 어느 쪽이든 존재하는 공통 경로를 써야 한다."""
     called_urls: list[str] = []
 
-    def fake_get(url: str, timeout: float) -> _FakeResponse:
+    def fake_get(url: str, headers: dict | None, timeout: float) -> _FakeResponse:
         called_urls.append(url)
         return _FakeResponse(200)
 
@@ -85,7 +89,9 @@ def test_LLM은_OpenAI_호환_models_경로로_확인한다(monkeypatch: pytest.
 
 
 def test_Milvus_예외는_milvus만_실패로(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(health_module.requests, "get", lambda url, timeout: _FakeResponse(200))
+    monkeypatch.setattr(
+        health_module.requests, "get", lambda url, headers, timeout: _FakeResponse(200)
+    )
     _patch_milvus(monkeypatch, _FakeMilvusClient(exc=RuntimeError("db 파일 잠김")))
 
     result = health_module.check_dependencies()
@@ -96,9 +102,29 @@ def test_Milvus_예외는_milvus만_실패로(monkeypatch: pytest.MonkeyPatch) -
 
 def test_컬렉션이_없어도_접속되면_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     """첫 적재 전 상태는 장애가 아니다."""
-    monkeypatch.setattr(health_module.requests, "get", lambda url, timeout: _FakeResponse(200))
+    monkeypatch.setattr(
+        health_module.requests, "get", lambda url, headers, timeout: _FakeResponse(200)
+    )
     _patch_milvus(monkeypatch, _FakeMilvusClient(exists=False))
 
     result = health_module.check_dependencies()
     assert result["status"] == "ok"
     assert "첫 적재 전" in result["services"]["milvus"]["detail"]
+
+
+def test_LLM_헬스체크는_API_키를_실어_보낸다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--api-key로 뜬 vLLM은 /models도 인증을 요구한다 (원격 LLM 테스트)."""
+    sent: dict[str, dict | None] = {}
+
+    def fake_get(url: str, headers: dict | None, timeout: float) -> _FakeResponse:
+        sent[url] = headers
+        return _FakeResponse(200)
+
+    config = dataclasses.replace(health_module.get_config(), AX_API_KEY="테스트키")
+    monkeypatch.setattr(health_module, "get_config", lambda: config)
+    monkeypatch.setattr(health_module.requests, "get", fake_get)
+    _patch_milvus(monkeypatch, _FakeMilvusClient(exists=True))
+
+    health_module.check_dependencies()
+    llm_headers = next(h for url, h in sent.items() if url.endswith("/models"))
+    assert llm_headers == {"Authorization": "Bearer 테스트키"}

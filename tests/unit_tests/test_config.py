@@ -48,3 +48,20 @@ def test_수치_설정_타입과_기본값(config: Config) -> None:
 
 def test_도메인_분류_체계() -> None:
     assert DOMAINS == ("HR", "TECH", "FINANCE_LEGAL", "GENERAL", "MANUAL", "DIRECTIVE")
+
+
+def test_원격_LLM은_기본적으로_거부된다(config: Config) -> None:
+    with pytest.raises(ValueError, match="에어갭"):
+        dataclasses.replace(
+            config, AX_ALLOW_REMOTE_LLM=False, AX_BASE_URL="http://203.0.113.10:30080/v1"
+        )
+
+
+def test_원격_LLM_허용_모드는_LLM만_예외다(config: Config) -> None:
+    remote = dataclasses.replace(
+        config, AX_ALLOW_REMOTE_LLM=True, AX_BASE_URL="http://203.0.113.10:30080/v1"
+    )
+    assert remote.AX_BASE_URL == "http://203.0.113.10:30080/v1"
+    # 임베딩·리랭커는 허용 모드에서도 localhost만
+    with pytest.raises(ValueError, match="에어갭"):
+        dataclasses.replace(remote, EMBEDDING_SERVER_URL="http://203.0.113.10:8001/embed")

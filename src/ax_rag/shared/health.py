@@ -5,7 +5,7 @@ MARS가 의존하는 로컬 서비스 4종(LLM, 임베딩, 리랭커, Milvus)의
 프론트의 서버 상태 화면에서 미리 볼 수 있게 하는 용도다.
 
 에어갭 규칙: 검사 대상 URL은 전부 config에서 파생한다
-(config가 localhost 강제를 보장).
+(config가 localhost 강제를 보장. 단 AX_ALLOW_REMOTE_LLM=true면 LLM만 예외).
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ def _service_base(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _check_http(url: str) -> dict:
+def _check_http(url: str, headers: dict[str, str] | None = None) -> dict:
     """GET 1회로 도달 여부를 판정한다. {"ok": bool, "detail": str} 반환."""
     try:
-        response = requests.get(url, timeout=HEALTH_TIMEOUT_SECONDS)
+        response = requests.get(url, headers=headers, timeout=HEALTH_TIMEOUT_SECONDS)
     except requests.RequestException as exc:
         return {"ok": False, "detail": f"연결 실패 ({url}): {exc.__class__.__name__}"}
     if response.status_code == 200:
@@ -60,11 +60,13 @@ def check_dependencies() -> dict:
     """로컬 서비스 4종 상태를 집계한다. 하나라도 실패면 status="degraded".
 
     LLM은 서빙(vLLM/llama.cpp)마다 전용 헬스 경로가 달라서, 둘 다 지원하는
-    OpenAI 호환 GET {AX_BASE_URL}/models로 확인한다.
+    OpenAI 호환 GET {AX_BASE_URL}/models로 확인한다. --api-key로 뜬 서버는
+    /models도 인증을 요구하므로 AX_API_KEY를 실어 보낸다.
     """
     config = get_config()
+    llm_headers = {"Authorization": f"Bearer {config.AX_API_KEY}"}
     services = {
-        "llm": _check_http(config.AX_BASE_URL.rstrip("/") + "/models"),
+        "llm": _check_http(config.AX_BASE_URL.rstrip("/") + "/models", llm_headers),
         "embedding": _check_http(_service_base(config.EMBEDDING_SERVER_URL) + "/health"),
         "reranker": _check_http(_service_base(config.RERANKER_SERVER_URL) + "/health"),
         "milvus": _check_milvus(),
