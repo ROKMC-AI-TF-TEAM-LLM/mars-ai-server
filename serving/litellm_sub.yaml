@@ -1,0 +1,22 @@
+# =====================================================================
+# 개발 노트북 전용: ChatGPT 구독(OAuth) 경로 LiteLLM 프록시 설정
+# 실행은 serving/start_llm_sub.ps1 (이 파일을 직접 쓰지 않는다)
+#
+# ★ 외부(chatgpt.com)로 나가는 유일한 경로다. L40/내부망 반입 금지.
+#   비민감 테스트 문서만 사용할 것 (검색 청크가 프롬프트에 실려 전송된다).
+#
+# - model_name을 AX_MODEL_NAME 기본값과 맞춰 .env 수정 없이 붙는다
+#   (start_llm_dev.ps1의 --alias와 같은 방식 → 8000 포트만 바꿔 끼우면 전환)
+# - "responses/" 접두사: litellm 1.104.2 모델표에 gpt-6-luna가 없어
+#   Chat Completions → Responses 브리지를 강제한다 (없으면 404 경로로 간다)
+# - reasoning_effort=none: 비추론 모드 (지연·사용량 최소, 함수 호출 조건 충족)
+# =====================================================================
+model_list:
+  - model_name: skt/A.X-4.0-Light
+    litellm_params:
+      model: chatgpt/responses/gpt-6-luna
+      reasoning_effort: none
+
+litellm_settings:
+  # 구독 백엔드가 거부하는 파라미터(temperature 등)를 에러 대신 버린다
+  drop_params: true
