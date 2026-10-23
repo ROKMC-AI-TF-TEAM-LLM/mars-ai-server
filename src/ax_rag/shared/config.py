@@ -10,6 +10,7 @@ get_config()를 통해서만 하며, 다른 모듈에서 os.environ에 직접
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -36,6 +37,21 @@ CHARS_PER_TOKEN: float = 2.2
 
 # 에어갭 규칙: 런타임 HTTP 호출이 허용되는 호스트
 _ALLOWED_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
+
+# ⚠️ 시연 전용 예외: EXTERNAL_LLM_ENABLED=true일 때만 LLM 호출에 허용되는 공인 호스트
+# (https 필수). 내부망(L40) 배포에서는 절대 켜지 않는다 — 질의·검색 청크가 외부로 나간다.
+# 사설 IP(10/8, 172.16/12, 192.168/16) 서버는 이 목록 없이 http/https 모두 허용된다
+_EXTERNAL_LLM_HOSTS: frozenset[str] = frozenset({"openrouter.ai"})
+
+
+def _is_private_ip(host: str | None) -> bool:
+    """호스트가 사설 IP 리터럴인지. 도메인명은 DNS 조작 여지가 있어 사설로 보지 않는다."""
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -124,8 +140,26 @@ class Config:
     LOG_LEVEL: str = "INFO"
     STREAM_TEXT_INTERVAL_MS: int = 200  # SSE text 간 전송 간격 (타자기 효과)
 
+    # Kiwi 모델 디렉터리. 비우면 kiwipiepy_model 패키지 기본 경로를 쓴다.
+    # Kiwi 네이티브 코드는 Windows에서 비ASCII 경로(예: 한글 사용자명 아래 .venv)의
+    # 모델 파일을 열지 못한다 ("Cannot open extract.mdl") — 그때 ASCII 경로 사본을 지정한다
+    KIWI_MODEL_PATH: str = ""
+
+    # --- 외부 LLM (시연 전용, 예: OpenRouter Gemma) ---
+    # ⚠️ 에어갭 규칙의 의도적 예외. 켜면 get_llm()이 A.X(vLLM) 대신 이 엔드포인트를
+    # 쓴다. 질의와 검색된 문서 청크가 외부로 전송되므로 내부망 배포에서는 끈다.
+    # 임베딩·리랭커·Milvus는 그대로 로컬이다
+    EXTERNAL_LLM_ENABLED: bool = False
+    EXTERNAL_LLM_BASE_URL: str = ""
+    EXTERNAL_LLM_MODEL_NAME: str = ""
+    EXTERNAL_LLM_API_KEY: str = ""
+
     def __post_init__(self) -> None:
-        """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다."""
+        """에어갭 검증: 서비스 URL이 localhost가 아니면 즉시 실패한다.
+
+        외부 LLM은 EXTERNAL_LLM_ENABLED=true일 때만, 사설 IP 또는 허용 공인 호스트(https)로
+        한정해 검증한다.
+        """
         for name in (
             "AX_BASE_URL",
             "EMBEDDING_SERVER_URL",
@@ -137,6 +171,28 @@ class Config:
             if host not in _ALLOWED_HOSTS:
                 raise ValueError(
                     f"{name}에 localhost가 아닌 호스트는 허용되지 않는다 (에어갭 규칙): {url}"
+                )
+
+        if self.EXTERNAL_LLM_ENABLED:
+            missing = [
+                name
+                for name in (
+                    "EXTERNAL_LLM_BASE_URL",
+                    "EXTERNAL_LLM_MODEL_NAME",
+                    "EXTERNAL_LLM_API_KEY",
+                )
+                if not getattr(self, name)
+            ]
+            if missing:
+                raise ValueError(f"EXTERNAL_LLM_ENABLED=true인데 설정이 비어 있다: {missing}")
+            parsed = urlparse(self.EXTERNAL_LLM_BASE_URL)
+            private_ok = parsed.scheme in ("http", "https") and _is_private_ip(parsed.hostname)
+            public_ok = parsed.scheme == "https" and parsed.hostname in _EXTERNAL_LLM_HOSTS
+            if not (private_ok or public_ok):
+                raise ValueError(
+                    "EXTERNAL_LLM_BASE_URL은 사설 IP 서버이거나 허용된 공인 호스트의 "
+                    f"https URL이어야 한다 ({sorted(_EXTERNAL_LLM_HOSTS)}): "
+                    f"{self.EXTERNAL_LLM_BASE_URL}"
                 )
 
 
@@ -207,4 +263,9 @@ def get_config() -> Config:
         HTTP_TIMEOUT_SECONDS=_env_float("HTTP_TIMEOUT_SECONDS", 60.0),
         LOG_LEVEL=_env_str("LOG_LEVEL", "INFO"),
         STREAM_TEXT_INTERVAL_MS=_env_int("STREAM_TEXT_INTERVAL_MS", 200),
+        KIWI_MODEL_PATH=_env_str("KIWI_MODEL_PATH", ""),
+        EXTERNAL_LLM_ENABLED=_env_bool("EXTERNAL_LLM_ENABLED", False),
+        EXTERNAL_LLM_BASE_URL=_env_str("EXTERNAL_LLM_BASE_URL", ""),
+        EXTERNAL_LLM_MODEL_NAME=_env_str("EXTERNAL_LLM_MODEL_NAME", ""),
+        EXTERNAL_LLM_API_KEY=_env_str("EXTERNAL_LLM_API_KEY", ""),
     )

@@ -27,6 +27,50 @@ def test_localhost가_아닌_URL은_거부된다(config: Config) -> None:
         dataclasses.replace(config, EMBEDDING_SERVER_URL="http://api.example.com/embed")
 
 
+def test_외부_LLM은_허용_호스트_https만_통과한다(config: Config) -> None:
+    replaced = dataclasses.replace(
+        config,
+        EXTERNAL_LLM_ENABLED=True,
+        EXTERNAL_LLM_BASE_URL="https://openrouter.ai/api/v1",
+        EXTERNAL_LLM_MODEL_NAME="모델",
+        EXTERNAL_LLM_API_KEY="키",
+    )
+    assert replaced.EXTERNAL_LLM_ENABLED
+    with pytest.raises(ValueError, match="https"):
+        dataclasses.replace(replaced, EXTERNAL_LLM_BASE_URL="https://api.example.com/v1")
+    with pytest.raises(ValueError, match="https"):
+        dataclasses.replace(replaced, EXTERNAL_LLM_BASE_URL="http://openrouter.ai/api/v1")
+
+
+def test_외부_LLM은_사설_IP면_http도_허용된다(config: Config) -> None:
+    base = dict(
+        EXTERNAL_LLM_ENABLED=True,
+        EXTERNAL_LLM_MODEL_NAME="모델",
+        EXTERNAL_LLM_API_KEY="키",
+    )
+    for url in (
+        "http://172.16.1.100:30080/v1",
+        "http://10.0.0.5:8000/v1",
+        "https://192.168.0.10/v1",
+    ):
+        assert dataclasses.replace(config, EXTERNAL_LLM_BASE_URL=url, **base)
+    # 공인 IP와 미등록 도메인은 http든 https든 거부
+    for url in ("http://8.8.8.8/v1", "https://8.8.8.8/v1", "http://internal.example.com/v1"):
+        with pytest.raises(ValueError, match="사설 IP"):
+            dataclasses.replace(config, EXTERNAL_LLM_BASE_URL=url, **base)
+
+
+def test_외부_LLM_설정이_비면_거부된다(config: Config) -> None:
+    with pytest.raises(ValueError, match="EXTERNAL_LLM_API_KEY"):
+        dataclasses.replace(
+            config,
+            EXTERNAL_LLM_ENABLED=True,
+            EXTERNAL_LLM_BASE_URL="https://openrouter.ai/api/v1",
+            EXTERNAL_LLM_MODEL_NAME="모델",
+            EXTERNAL_LLM_API_KEY="",
+        )
+
+
 def test_설정은_불변이다(config: Config) -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         config.AX_BASE_URL = "http://localhost:9999"  # type: ignore[misc]

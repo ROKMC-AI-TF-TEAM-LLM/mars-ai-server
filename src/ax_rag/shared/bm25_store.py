@@ -33,8 +33,11 @@ _VERSION_FILE = "version"  # 빌드마다 새로 쓰는 uuid (캐시 갱신 감�
 
 @lru_cache(maxsize=1)
 def _get_kiwi() -> Kiwi:
-    """Kiwi 형태소 분석기 싱글턴 (로드 비용 절감)."""
-    return Kiwi()
+    """Kiwi 형태소 분석기 싱글턴 (로드 비용 절감).
+
+    KIWI_MODEL_PATH가 비어 있으면 패키지 기본 모델 경로를 쓴다.
+    """
+    return Kiwi(model_path=get_config().KIWI_MODEL_PATH or None)
 
 
 def tokenize(text: str) -> list[str]:

@@ -90,6 +90,13 @@ def get_client() -> MilvusClient:
     else:
         _check_lite_available(uri)
         Path(uri).parent.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32" and not str(Path(uri).resolve()).isascii():
+            # faiss 네이티브 코드가 비ASCII 경로에 인덱스 파일을 못 쓴다 → 컬렉션 load 실패
+            logger.warning(
+                "MILVUS_LITE_PATH의 절대 경로에 비ASCII 문자가 있다: %s — Windows에서는 "
+                "faiss 인덱스 저장이 실패한다 (Illegal byte sequence). ASCII 경로로 지정할 것",
+                Path(uri).resolve(),
+            )
         # Lite를 쓸 때만 나오는 gRPC 미구현 소음을 여기서 막는다.
         # setup_logging()을 부르지 않는 진입점(스크립트 등)도 있어 접속 지점에서 건다
         silence_milvus_lite_noise()
